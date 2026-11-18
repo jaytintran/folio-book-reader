@@ -26,6 +26,9 @@
   --highlight-sky: rgba(74, 134, 179, 0.28);
   --highlight-rose: rgba(196, 100, 108, 0.3);
   --reader-selection: rgba(154, 77, 30, 0.22);
+  --tts-sentence-bg: rgba(154, 77, 30, 0.1);
+  --tts-word-bg: rgba(154, 77, 30, 0.24);
+  --tts-word-underline: #9a4d1e;
   color-scheme: light;
 }
 
@@ -53,6 +56,9 @@
   --highlight-sky: rgba(96, 156, 201, 0.26);
   --highlight-rose: rgba(209, 109, 117, 0.28);
   --reader-selection: rgba(217, 138, 78, 0.28);
+  --tts-sentence-bg: rgba(217, 138, 78, 0.14);
+  --tts-word-bg: rgba(217, 138, 78, 0.34);
+  --tts-word-underline: #e59c63;
   color-scheme: dark;
 }
 
@@ -340,6 +346,46 @@ mark.folio-search-match {
 
 .folio-pdf-text-layer ::selection {
   background: var(--reader-selection);
+}
+
+/* Synchronized Voice Narration Highlights (EPUB / MOBI) */
+span.folio-tts-sentence {
+  background-color: var(--tts-sentence-bg);
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background-color 140ms ease;
+}
+
+span.folio-tts-word {
+  background-color: var(--tts-word-bg);
+  border-radius: 3px;
+  box-shadow: inset 0 -2px 0 var(--tts-word-underline);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background-color 80ms ease;
+}
+
+.folio-prose.folio-voice-tap-active {
+  cursor: pointer;
+}
+
+/* Synchronized Voice Narration Overlays (PDF) */
+.folio-pdf-tts-sentence {
+  position: absolute;
+  pointer-events: none;
+  background-color: var(--tts-sentence-bg);
+  border-radius: 2px;
+  transition: opacity 120ms ease;
+}
+
+.folio-pdf-tts-word {
+  position: absolute;
+  pointer-events: none;
+  background-color: var(--tts-word-bg);
+  border-bottom: 2px solid var(--tts-word-underline);
+  border-radius: 2px;
+  transition: left 70ms linear, width 70ms linear, top 70ms linear;
 }
 
 /* Mobile Safe-Area & Touch Helpers */

@@ -1,6 +1,14 @@
 import {ChevronLeft, ChevronRight, StickyNote, X} from 'lucide-react';
 import React, {useCallback, useEffect, useImperativeHandle, useRef, useState} from 'react';
 import {HIGHLIGHT_COLORS} from '../../lib/formatters';
+import {
+  applyTtsDomHighlight,
+  clearTtsDomHighlights,
+  extractReflowableNarrationMap,
+  findFirstVisibleReflowableSentence,
+  findSentenceAtDomPoint,
+  type NarrationSentence,
+} from '../../lib/narrationText';
 import type {
   HighlightColor,
   HighlightRecord,
@@ -19,6 +27,7 @@ interface SelectionMenuState {
 export interface ReflowableNavHandle {
   stepPrev: () => void;
   stepNext: () => void;
+  getFirstVisibleSentenceIndex: () => number;
 }
 
 interface ReflowableViewportProps {
@@ -33,6 +42,17 @@ interface ReflowableViewportProps {
   bottomBarPinned: boolean;
   topOverlayActive: boolean;
   bottomOverlayActive: boolean;
+  voiceActive?: boolean;
+  voicePlaying?: boolean;
+  voiceTapToRead?: boolean;
+  voiceSkipNoise?: boolean;
+  activeSentenceIndex?: number;
+  activeWordIndex?: number;
+  voiceFollowEnabled?: boolean;
+  recenterNonce?: number;
+  onSentencesReady?: (sentences: NarrationSentence[]) => void;
+  onSentenceTap?: (sentenceIndex: number) => void;
+  onUserDetachedScroll?: () => void;
   onChapterChange: (nextIndex: number, initialRatio?: number) => void;
   onScrollProgress: (scrollRatio: number) => void;
   onCreateHighlight: (payload: {
@@ -202,6 +222,17 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
   bottomBarPinned,
   topOverlayActive,
   bottomOverlayActive,
+  voiceActive = false,
+  voicePlaying = false,
+  voiceTapToRead = true,
+  voiceSkipNoise = true,
+  activeSentenceIndex = -1,
+  activeWordIndex = -1,
+  voiceFollowEnabled = true,
+  recenterNonce = 0,
+  onSentencesReady,
+  onSentenceTap,
+  onUserDetachedScroll,
   onChapterChange,
   onScrollProgress,
   onCreateHighlight,
@@ -213,6 +244,13 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
   const spreadFrameRef = useRef<HTMLDivElement>(null);
   const proseRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef<number>(0);
+  const sentencesRef = useRef<NarrationSentence[]>([]);
+  const lastAutoScrolledSentenceRef = useRef<number>(-1);
+  const lastRecenterNonceRef = useRef<number>(0);
+  const programmaticVoiceScrollRef = useRef<boolean>(false);
+  const voiceScrollTimerRef = useRef<number | null>(null);
+  const onSentencesReadyRef = useRef(onSentencesReady);
+  onSentencesReadyRef.current = onSentencesReady;
 
   const [spreadDims, setSpreadDims] = useState<{width: number; height: number}>({
     width: 900,
@@ -307,11 +345,20 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
 
     setSelectionMenu(null);
     setNoteOpen(false);
+    lastAutoScrolledSentenceRef.current = -1;
+
+    // Build synchronized narration sentence map for this chapter
+    const extracted = extractReflowableNarrationMap(el, chapterIndex, voiceSkipNoise);
+    sentencesRef.current = extracted;
+    onSentencesReadyRef.current?.(extracted);
+
     return () => window.cancelAnimationFrame(raf);
   }, [
     chapter,
+    chapterIndex,
     chapterHighlights,
     searchHighlight,
+    voiceSkipNoise,
     isSpread,
     spreadDims.width,
     spreadDims.height,
@@ -325,6 +372,86 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
     initialScrollRatio,
     columnGap,
     spreadStepPx,
+  ]);
+
+  // Apply live sentence + active word DOM highlights & auto-scroll / spread turn
+  useEffect(() => {
+    const el = proseRef.current;
+    if (!el) return;
+
+    if (!voiceActive || activeSentenceIndex < 0) {
+      clearTtsDomHighlights(el);
+      lastAutoScrolledSentenceRef.current = -1;
+      return;
+    }
+
+    const sentence = sentencesRef.current[activeSentenceIndex];
+    if (!sentence) {
+      clearTtsDomHighlights(el);
+      return;
+    }
+
+    const {sentenceEl, wordEl} = applyTtsDomHighlight(
+      el,
+      sentence,
+      activeWordIndex,
+      voiceSkipNoise
+    );
+
+    const forceRecenter = recenterNonce !== lastRecenterNonceRef.current;
+    if (forceRecenter) {
+      lastRecenterNonceRef.current = recenterNonce;
+    }
+
+    const sentenceChanged = lastAutoScrolledSentenceRef.current !== activeSentenceIndex;
+    const targetEl = wordEl || sentenceEl;
+
+    if (targetEl && (voiceFollowEnabled || forceRecenter) && (sentenceChanged || forceRecenter)) {
+      lastAutoScrolledSentenceRef.current = activeSentenceIndex;
+
+      if (isSpread) {
+        const offsetLeft = targetEl.offsetLeft;
+        const targetSpread = Math.min(
+          Math.max(0, totalSpreads - 1),
+          Math.max(0, Math.floor(offsetLeft / Math.max(1, spreadStepPx)))
+        );
+        if (targetSpread !== spreadIndex) {
+          setSpreadIndex(targetSpread);
+          onScrollProgress(totalSpreads > 1 ? targetSpread / (totalSpreads - 1) : 0);
+        }
+      } else {
+        const scroller = scrollContainerRef.current;
+        if (scroller) {
+          const vpRect = scroller.getBoundingClientRect();
+          const elRect = targetEl.getBoundingClientRect();
+          const outsideComfortBand =
+            forceRecenter ||
+            elRect.top < vpRect.top + vpRect.height * 0.22 ||
+            elRect.bottom > vpRect.bottom - vpRect.height * 0.28;
+
+          if (outsideComfortBand) {
+            programmaticVoiceScrollRef.current = true;
+            if (voiceScrollTimerRef.current) window.clearTimeout(voiceScrollTimerRef.current);
+            targetEl.scrollIntoView({behavior: 'smooth', block: 'center'});
+            voiceScrollTimerRef.current = window.setTimeout(() => {
+              programmaticVoiceScrollRef.current = false;
+            }, 520);
+          }
+        }
+      }
+    }
+  }, [
+    voiceActive,
+    activeSentenceIndex,
+    activeWordIndex,
+    voiceSkipNoise,
+    voiceFollowEnabled,
+    recenterNonce,
+    isSpread,
+    totalSpreads,
+    spreadStepPx,
+    spreadIndex,
+    onScrollProgress,
   ]);
 
   const stepPrev = useCallback(() => {
@@ -375,7 +502,18 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
     onScrollDirection,
   ]);
 
-  useImperativeHandle(navRef, () => ({stepPrev, stepNext}), [stepPrev, stepNext]);
+  const getFirstVisibleSentenceIndex = useCallback(() => {
+    const el = proseRef.current;
+    if (!el || sentencesRef.current.length === 0) return 0;
+    const viewportEl = isSpread ? spreadFrameRef.current : scrollContainerRef.current;
+    return findFirstVisibleReflowableSentence(el, viewportEl, sentencesRef.current, voiceSkipNoise);
+  }, [isSpread, voiceSkipNoise]);
+
+  useImperativeHandle(
+    navRef,
+    () => ({stepPrev, stepNext, getFirstVisibleSentenceIndex}),
+    [stepPrev, stepNext, getFirstVisibleSentenceIndex]
+  );
 
   // Keyboard navigation
   useEffect(() => {
@@ -399,6 +537,15 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
     if (!scroller) return;
     const top = scroller.scrollTop;
     const delta = top - lastScrollTopRef.current;
+    if (
+      voiceActive &&
+      voicePlaying &&
+      voiceFollowEnabled &&
+      !programmaticVoiceScrollRef.current &&
+      Math.abs(delta) > 28
+    ) {
+      onUserDetachedScroll?.();
+    }
     if (delta > 14 && top > 48) {
       onScrollDirection?.('down');
       lastScrollTopRef.current = top;
@@ -530,7 +677,7 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
 
-    // On mobile viewports (<1024px), outer 20% edge zones turn pages and center 60% toggles bars
+    // On mobile viewports (<1024px), outer 20% edge zones turn pages
     if (window.innerWidth < 1024) {
       const rect = e.currentTarget.getBoundingClientRect();
       const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
@@ -540,6 +687,21 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
       }
       if (relX > 0.8) {
         turnPageMobile('next');
+        return;
+      }
+    }
+
+    // Tap any sentence to read from there when Voice mode & tap-to-read are active
+    if (voiceActive && voiceTapToRead && proseRef.current && proseRef.current.contains(el)) {
+      const tappedIdx = findSentenceAtDomPoint(
+        proseRef.current,
+        sentencesRef.current,
+        e.clientX,
+        e.clientY,
+        voiceSkipNoise
+      );
+      if (tappedIdx !== null) {
+        onSentenceTap?.(tappedIdx);
         return;
       }
     }
@@ -629,7 +791,9 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
                 ref={proseRef}
                 onMouseUp={handleMouseUp}
                 onTouchEnd={handleMouseUp}
-                className={`folio-prose folio-spread-content ${fontClass} transition-transform duration-200 ease-out`}
+                className={`folio-prose folio-spread-content ${fontClass} ${
+                  voiceActive && voiceTapToRead ? 'folio-voice-tap-active' : ''
+                } transition-transform duration-200 ease-out`}
                 style={{
                   ...proseCustomStyles,
                   height: `${spreadDims.height}px`,
@@ -694,7 +858,9 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
               ref={proseRef}
               onMouseUp={handleMouseUp}
               onTouchEnd={handleMouseUp}
-              className={`folio-prose ${fontClass}`}
+              className={`folio-prose ${fontClass} ${
+                voiceActive && voiceTapToRead ? 'folio-voice-tap-active' : ''
+              }`}
               style={proseCustomStyles}
             />
 

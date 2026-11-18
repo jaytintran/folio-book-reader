@@ -2,6 +2,7 @@ import {
   AlertCircle,
   Bookmark,
   Columns2,
+  Headphones,
   List,
   Moon,
   PanelRight,
@@ -12,7 +13,10 @@ import {
   Type,
 } from 'lucide-react';
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {useAudiobookNarrator} from '../../hooks/useAudiobookNarrator';
+import {useVoicePreferences} from '../../hooks/useVoicePreferences';
 import {libraryDb} from '../../lib/db';
+import type {NarrationSentence} from '../../lib/narrationText';
 import {parseEpubForReading} from '../../lib/parsers/epubParser';
 import {parseMobiForReading} from '../../lib/parsers/mobiParser';
 import {
@@ -38,6 +42,8 @@ import type {
   SearchMatch,
 } from '../../types/library';
 import {BottomSheet} from '../ui/BottomSheet';
+import {AudiobookExpandedView} from './AudiobookExpandedView';
+import {AudiobookPlayerBar} from './AudiobookPlayerBar';
 import {PdfViewport} from './PdfViewport';
 import {ReaderDrawer, type ReaderDrawerTab} from './ReaderDrawer';
 import {ReaderScrubber, type ScrubberMarker} from './ReaderScrubber';
@@ -48,6 +54,7 @@ import {
 } from './ReflowableViewport';
 import {StudyPane} from './StudyPane';
 import {TypographyPopover} from './TypographyPopover';
+import {VoiceSettingsPanel} from './VoiceSettingsPanel';
 
 interface ReaderViewProps {
   book: BookRecord;
@@ -128,6 +135,29 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const [pdfTextCache, setPdfTextCache] = useState<string[] | null>(null);
   const [isIndexingPdfSearch, setIsIndexingPdfSearch] = useState(false);
 
+  // Voice / Audiobook Reader state
+  const {
+    effectiveSettings: voiceSettings,
+    hasBookOverride: hasBookVoiceOverride,
+    updateBookVoice,
+    updateGlobalVoiceOption,
+    clearBookOverride,
+  } = useVoicePreferences(book.id);
+
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [audiobookExpanded, setAudiobookExpanded] = useState(false);
+  const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
+  const [userDetachedScroll, setUserDetachedScroll] = useState(false);
+  const [recenterNonce, setRecenterNonce] = useState(0);
+  const [reflowableSentences, setReflowableSentences] = useState<NarrationSentence[]>([]);
+  const [pdfSentencesByPage, setPdfSentencesByPage] = useState<Record<number, NarrationSentence[]>>(
+    {}
+  );
+  const [voicePdfPage, setVoicePdfPage] = useState<number>(
+    book.currentLocation?.unitIndex ?? 1
+  );
+  const pendingPdfStartRef = useRef<{page: number; sentenceIndex: number} | null>(null);
+
   const reflowableNavRef = useRef<ReflowableNavHandle>(null);
   const saveTimeoutRef = useRef<number | null>(null);
   const latestBookRef = useRef(book);
@@ -144,10 +174,19 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     setFocusedHighlightId(null);
     setHeaderRevealed(true);
     setBottomRevealed(true);
-    setUnitIndex(book.currentLocation?.unitIndex ?? (book.format === 'pdf' ? 1 : 0));
+    const startUnit = book.currentLocation?.unitIndex ?? (book.format === 'pdf' ? 1 : 0);
+    setUnitIndex(startUnit);
+    setVoicePdfPage(startUnit);
     setTargetScrollRatio(book.currentLocation?.scrollRatio ?? 0);
     setLiveScrollRatio(book.currentLocation?.scrollRatio ?? 0);
     currentScrollRatioRef.current = book.currentLocation?.scrollRatio ?? 0;
+    setVoiceOpen(false);
+    setAudiobookExpanded(false);
+    setVoiceSettingsOpen(false);
+    setUserDetachedScroll(false);
+    setReflowableSentences([]);
+    setPdfSentencesByPage({});
+    pendingPdfStartRef.current = null;
   }, [book.id]);
 
   // Load book binary + bookmarks + highlights
@@ -269,6 +308,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     headerRevealed ||
     hoveringTopBar ||
     typographyOpen ||
+    voiceSettingsOpen ||
     (drawerOpen && (isMobileViewport || !prefs.pinLeftSidebar)) ||
     loading ||
     Boolean(error);
@@ -484,6 +524,154 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     },
     [book.format, persistProgress]
   );
+
+  // Active narration sentences for current unit (EPUB/MOBI chapter or PDF page)
+  const activeNarrationUnit = book.format === 'pdf' ? voicePdfPage : unitIndex;
+  const activeNarrationSentences = useMemo(() => {
+    if (book.format === 'pdf') {
+      return pdfSentencesByPage[voicePdfPage] ?? [];
+    }
+    return reflowableSentences;
+  }, [book.format, pdfSentencesByPage, voicePdfPage, reflowableSentences]);
+
+  const handleAdvanceVoiceUnit = useCallback(
+    (dir: 'prev' | 'next'): boolean => {
+      if (book.format === 'pdf') {
+        const nextPage = dir === 'next' ? voicePdfPage + 1 : voicePdfPage - 1;
+        if (nextPage < 1 || nextPage > totalUnits) return false;
+        setVoicePdfPage(nextPage);
+        setUserDetachedScroll(false);
+        handleJumpToUnit(nextPage, 0, false);
+        return true;
+      }
+      const nextCh = dir === 'next' ? unitIndex + 1 : unitIndex - 1;
+      if (nextCh < 0 || nextCh >= totalUnits) return false;
+      setUserDetachedScroll(false);
+      handleJumpToUnit(nextCh, 0, false);
+      return true;
+    },
+    [book.format, voicePdfPage, unitIndex, totalUnits, handleJumpToUnit]
+  );
+
+  const narrator = useAudiobookNarrator({
+    bookId: book.id,
+    unitIndex: activeNarrationUnit,
+    sentences: activeNarrationSentences,
+    settings: voiceSettings,
+    onAdvanceUnit: handleAdvanceVoiceUnit,
+    onNotify,
+  });
+
+  // Trigger deferred PDF sentence play once the target PDF page's sentences arrive
+  useEffect(() => {
+    const pending = pendingPdfStartRef.current;
+    if (!pending || book.format !== 'pdf') return;
+    if (pending.page !== voicePdfPage) return;
+    const sents = pdfSentencesByPage[pending.page];
+    if (!sents || sents.length === 0) return;
+    pendingPdfStartRef.current = null;
+    narrator.playFrom(Math.min(sents.length - 1, Math.max(0, pending.sentenceIndex)));
+  }, [book.format, voicePdfPage, pdfSentencesByPage, narrator.playFrom]);
+
+  // Voice keyboard controls (Space to toggle play/pause, [ and ] to step sentence) when player open
+  useEffect(() => {
+    if (!voiceOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        const fallback =
+          book.format === 'pdf'
+            ? 0
+            : reflowableNavRef.current?.getFirstVisibleSentenceIndex() ?? 0;
+        narrator.togglePlay(fallback);
+      } else if (e.key === '[') {
+        e.preventDefault();
+        setUserDetachedScroll(false);
+        narrator.stepSentence(-1);
+      } else if (e.key === ']') {
+        e.preventDefault();
+        setUserDetachedScroll(false);
+        narrator.stepSentence(1);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [voiceOpen, book.format, narrator]);
+
+  const handleToggleVoiceMode = useCallback(() => {
+    if (voiceOpen) {
+      narrator.stop();
+      setVoiceOpen(false);
+      setAudiobookExpanded(false);
+      setVoiceSettingsOpen(false);
+      setUserDetachedScroll(false);
+      return;
+    }
+
+    setVoiceOpen(true);
+    setUserDetachedScroll(false);
+    setTypographyOpen(false);
+
+    if (book.format === 'pdf') {
+      setVoicePdfPage(unitIndex);
+      const sents = pdfSentencesByPage[unitIndex];
+      if (sents && sents.length > 0) {
+        narrator.playFrom(0);
+      } else {
+        pendingPdfStartRef.current = {page: unitIndex, sentenceIndex: 0};
+      }
+    } else {
+      const startIdx = reflowableNavRef.current?.getFirstVisibleSentenceIndex() ?? 0;
+      narrator.playFrom(startIdx);
+    }
+  }, [voiceOpen, narrator, book.format, unitIndex, pdfSentencesByPage]);
+
+  const handlePdfPageSentencesReady = useCallback(
+    (pageNum: number, sents: NarrationSentence[]) => {
+      setPdfSentencesByPage((prev) => {
+        if (prev[pageNum] === sents) return prev;
+        return {...prev, [pageNum]: sents};
+      });
+    },
+    []
+  );
+
+  const handleTapReflowableSentence = useCallback(
+    (sentenceIdx: number) => {
+      setUserDetachedScroll(false);
+      if (!voiceOpen) setVoiceOpen(true);
+      narrator.playFrom(sentenceIdx);
+    },
+    [voiceOpen, narrator]
+  );
+
+  const handleTapPdfSentence = useCallback(
+    (pageNum: number, sentenceIdx: number) => {
+      setUserDetachedScroll(false);
+      if (!voiceOpen) setVoiceOpen(true);
+      if (pageNum === voicePdfPage && (pdfSentencesByPage[pageNum]?.length ?? 0) > 0) {
+        narrator.playFrom(sentenceIdx);
+      } else {
+        setVoicePdfPage(pageNum);
+        pendingPdfStartRef.current = {page: pageNum, sentenceIndex: sentenceIdx};
+      }
+    },
+    [voiceOpen, voicePdfPage, pdfSentencesByPage, narrator]
+  );
+
+  const handleRecenterToVoice = useCallback(() => {
+    setUserDetachedScroll(false);
+    if (book.format === 'pdf' && voicePdfPage !== unitIndex) {
+      handleJumpToUnit(voicePdfPage, 0, false);
+    }
+    setRecenterNonce((n) => n + 1);
+  }, [book.format, voicePdfPage, unitIndex, handleJumpToUnit]);
+
+  const activeSentenceDisplayText =
+    activeNarrationSentences[narrator.activeSentenceIndex]?.rawText ?? '';
 
   const handleScrollProgress = useCallback(
     (scrollRatio: number) => {
@@ -713,15 +901,18 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           openBooks={openBooks}
           activeBookId={book.id}
           onSelectLibrary={() => {
+            narrator.stop();
             persistProgress(unitIndex, currentScrollRatioRef.current, true);
             onSelectLibrary();
           }}
           onSelectBook={(id) => {
+            narrator.stop();
             persistProgress(unitIndex, currentScrollRatioRef.current, true);
             onSelectBookTab(id);
           }}
           onCloseBookTab={(id) => {
             if (id === book.id) {
+              narrator.stop();
               persistProgress(unitIndex, currentScrollRatioRef.current, true);
             }
             onCloseBookTab(id);
@@ -809,6 +1000,26 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                 )}
               </button>
             )}
+
+            {/* Listen / Audiobook Narration Toggle */}
+            <button
+              type="button"
+              disabled={loading || Boolean(error)}
+              onClick={handleToggleVoiceMode}
+              title={voiceOpen ? 'Close Audiobook Voice Reader' : 'Listen with synchronized voice narration'}
+              aria-label={voiceOpen ? 'Close voice narration' : 'Start voice narration'}
+              aria-pressed={voiceOpen}
+              className={`min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 inline-flex items-center justify-center gap-1.5 px-2 lg:px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap disabled:opacity-40 ${
+                voiceOpen
+                  ? 'text-[var(--accent)] bg-[var(--bg-accent-subtle)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
+              }`}
+            >
+              <Headphones className="w-4 h-4" />
+              <span className="hidden md:inline">
+                {narrator.status === 'playing' ? 'Listening' : 'Listen'}
+              </span>
+            </button>
 
             <button
               type="button"
@@ -990,6 +1201,18 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             headerPinned={effectivePinHeader}
             bottomBarPinned={effectivePinBottomBar}
             searchHighlight={activePdfSearch}
+            voiceActive={voiceOpen}
+            voicePlaying={narrator.status === 'playing'}
+            voiceTapToRead={voiceSettings.tapToRead}
+            voiceSkipNoise={voiceSettings.skipNoise}
+            activeVoicePage={voicePdfPage}
+            activeSentenceIndex={narrator.activeSentenceIndex}
+            activeWordIndex={narrator.activeWordIndex}
+            voiceFollowEnabled={!userDetachedScroll}
+            recenterNonce={recenterNonce}
+            onPageSentencesReady={handlePdfPageSentencesReady}
+            onSentenceTap={handleTapPdfSentence}
+            onUserDetachedScroll={() => setUserDetachedScroll(true)}
             onPageChange={(nextPage, isUserScroll) => handleJumpToUnit(nextPage, 0, isUserScroll)}
             onCreateHighlight={handleCreateHighlight}
             onScrollDirection={handleScrollDirection}
@@ -1008,6 +1231,17 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             bottomBarPinned={effectivePinBottomBar}
             topOverlayActive={topOverlayActive}
             bottomOverlayActive={bottomOverlayActive}
+            voiceActive={voiceOpen}
+            voicePlaying={narrator.status === 'playing'}
+            voiceTapToRead={voiceSettings.tapToRead}
+            voiceSkipNoise={voiceSettings.skipNoise}
+            activeSentenceIndex={narrator.activeSentenceIndex}
+            activeWordIndex={narrator.activeWordIndex}
+            voiceFollowEnabled={!userDetachedScroll}
+            recenterNonce={recenterNonce}
+            onSentencesReady={setReflowableSentences}
+            onSentenceTap={handleTapReflowableSentence}
+            onUserDetachedScroll={() => setUserDetachedScroll(true)}
             onChapterChange={(nextCh, ratio = 0) => handleJumpToUnit(nextCh, ratio)}
             onScrollProgress={handleScrollProgress}
             onCreateHighlight={handleCreateHighlight}
@@ -1054,6 +1288,146 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             onReset={onResetPrefs}
           />
         </BottomSheet>
+      )}
+
+      {/* Voice Settings Popover (Desktop lg+) */}
+      {voiceSettingsOpen && !isMobileViewport && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => {
+              narrator.stopPreview();
+              setVoiceSettingsOpen(false);
+            }}
+          />
+          <div className="fixed right-5 bottom-24 z-50">
+            <VoiceSettingsPanel
+              settings={voiceSettings}
+              deviceVoices={narrator.deviceVoices}
+              hasBookOverride={hasBookVoiceOverride}
+              previewingVoiceUri={narrator.previewingVoiceUri}
+              onUpdateBookVoice={updateBookVoice}
+              onUpdateGlobalOption={updateGlobalVoiceOption}
+              onResetBookOverride={clearBookOverride}
+              onPreviewVoice={(voiceUri, tone, rate) =>
+                narrator.previewVoice(voiceUri, tone, rate)
+              }
+            />
+          </div>
+        </>
+      )}
+
+      {/* Voice Settings Bottom Sheet (Mobile <lg) */}
+      {isMobileViewport && (
+        <BottomSheet
+          isOpen={voiceSettingsOpen}
+          onClose={() => {
+            narrator.stopPreview();
+            setVoiceSettingsOpen(false);
+          }}
+          title="Offline Narrator & Voice"
+          ariaLabel="Narrator and voice settings"
+        >
+          <VoiceSettingsPanel
+            settings={voiceSettings}
+            deviceVoices={narrator.deviceVoices}
+            hasBookOverride={hasBookVoiceOverride}
+            previewingVoiceUri={narrator.previewingVoiceUri}
+            embeddedInSheet
+            onUpdateBookVoice={updateBookVoice}
+            onUpdateGlobalOption={updateGlobalVoiceOption}
+            onResetBookOverride={clearBookOverride}
+            onPreviewVoice={(voiceUri, tone, rate) => narrator.previewVoice(voiceUri, tone, rate)}
+          />
+        </BottomSheet>
+      )}
+
+      {/* Compact Docked Audiobook Player Bar */}
+      {!loading && !error && voiceOpen && !audiobookExpanded && (
+        <AudiobookPlayerBar
+          status={narrator.status}
+          errorMessage={narrator.errorMessage}
+          activeSentenceText={activeSentenceDisplayText}
+          activeSentenceIndex={narrator.activeSentenceIndex}
+          totalSentences={activeNarrationSentences.length}
+          settings={voiceSettings}
+          activeVoiceName={narrator.activeVoiceName}
+          sleepTimerMode={narrator.sleepTimerMode}
+          sleepSecondsLeft={narrator.sleepSecondsLeft}
+          userDetachedScroll={userDetachedScroll}
+          scrubberVisible={bottomBarVisible}
+          scrubberPinned={effectivePinBottomBar}
+          voiceSettingsOpen={voiceSettingsOpen}
+          onTogglePlay={() => {
+            const fallback =
+              book.format === 'pdf'
+                ? 0
+                : reflowableNavRef.current?.getFirstVisibleSentenceIndex() ?? 0;
+            narrator.togglePlay(fallback);
+          }}
+          onStepSentence={(delta) => {
+            setUserDetachedScroll(false);
+            narrator.stepSentence(delta);
+          }}
+          onSkipSeconds={(sec) => {
+            setUserDetachedScroll(false);
+            narrator.skipSeconds(sec);
+          }}
+          onUpdateRate={(rate) => updateBookVoice({rate})}
+          onSelectSleepTimer={narrator.setSleepTimerMode}
+          onToggleVoiceSettings={() => setVoiceSettingsOpen((v) => !v)}
+          onRecenterToVoice={handleRecenterToVoice}
+          onExpandAudiobook={() => {
+            setVoiceSettingsOpen(false);
+            setAudiobookExpanded(true);
+          }}
+          onClose={() => {
+            narrator.stop();
+            setVoiceOpen(false);
+            setVoiceSettingsOpen(false);
+            setUserDetachedScroll(false);
+          }}
+          onMouseEnter={() => setHoveringBottomBar(true)}
+          onMouseLeave={() => setHoveringBottomBar(false)}
+        />
+      )}
+
+      {/* Full-Screen Expandable Audiobook Studio View */}
+      {!loading && !error && voiceOpen && audiobookExpanded && (
+        <AudiobookExpandedView
+          book={book}
+          unitLabel={
+            book.format === 'pdf'
+              ? `Page ${voicePdfPage} of ${totalUnits}`
+              : currentUnitLabel
+          }
+          sentences={activeNarrationSentences}
+          activeSentenceIndex={narrator.activeSentenceIndex}
+          activeWordIndex={narrator.activeWordIndex}
+          status={narrator.status}
+          errorMessage={narrator.errorMessage}
+          settings={voiceSettings}
+          activeVoiceName={narrator.activeVoiceName}
+          sleepTimerMode={narrator.sleepTimerMode}
+          sleepSecondsLeft={narrator.sleepSecondsLeft}
+          onTogglePlay={() => narrator.togglePlay(narrator.activeSentenceIndex)}
+          onJumpToSentence={(idx) => {
+            setUserDetachedScroll(false);
+            narrator.playFrom(idx);
+          }}
+          onStepSentence={(delta) => {
+            setUserDetachedScroll(false);
+            narrator.stepSentence(delta);
+          }}
+          onSkipSeconds={(sec) => {
+            setUserDetachedScroll(false);
+            narrator.skipSeconds(sec);
+          }}
+          onUpdateRate={(rate) => updateBookVoice({rate})}
+          onSelectSleepTimer={narrator.setSleepTimerMode}
+          onOpenVoiceSettings={() => setVoiceSettingsOpen(true)}
+          onCollapse={() => setAudiobookExpanded(false)}
+        />
       )}
 
       {/* Bottom Scrubber: Docked flex footer when pinned, retractable fixed overlay when unpinned */}

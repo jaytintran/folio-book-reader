@@ -211,3 +211,20 @@ export interface ToastMessage {
   detail?: string;
   tone: 'info' | 'success' | 'error';
 }
+
+export type NarratorTone = 'calm' | 'storyteller' | 'crisp';
+
+export type SleepTimerMode = 'off' | '15m' | '30m' | '45m' | 'chapter';
+
+export interface BookVoiceOverride {
+  deviceVoiceUri: string | null;
+  tone: NarratorTone;
+  rate: number; // 0.7 .. 2.5
+}
+
+export interface VoicePreferences extends BookVoiceOverride {
+  skipNoise: boolean;
+  tapToRead: boolean;
+  perBookOverrides: Record<string, BookVoiceOverride>;
+}
+
