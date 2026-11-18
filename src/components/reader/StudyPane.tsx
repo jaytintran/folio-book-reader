@@ -66,13 +66,8 @@ export const StudyPane: React.FC<StudyPaneProps> = ({
     setComposerOpen(false);
   };
 
-  return (
-    <aside
-      aria-label="Side-by-side notes and highlights study pane"
-      className={`fixed inset-y-0 right-0 z-40 w-full max-w-sm lg:static lg:z-auto lg:w-[348px] xl:w-[372px] h-full border-l border-[var(--border-subtle)] bg-[var(--bg-surface)] flex flex-col shrink-0 shadow-xl lg:shadow-none transition-[padding] duration-180 ${
-        topOverlayActive ? 'lg:pt-[84px]' : 'lg:pt-0'
-      } ${bottomOverlayActive ? 'lg:pb-[52px]' : 'lg:pb-0'}`}
-    >
+  const paneContent = (
+    <>
       {/* Pane Header */}
       <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
@@ -355,6 +350,39 @@ export const StudyPane: React.FC<StudyPaneProps> = ({
           </div>
         )}
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      {/* Desktop Docked Split Study Pane (lg+) — unchanged */}
+      <aside
+        aria-label="Side-by-side notes and highlights study pane"
+        className={`hidden lg:flex lg:w-[348px] xl:w-[372px] h-full border-l border-[var(--border-subtle)] bg-[var(--bg-surface)] flex-col shrink-0 transition-[padding] duration-180 ${
+          topOverlayActive ? 'lg:pt-[84px]' : 'lg:pt-0'
+        } ${bottomOverlayActive ? 'lg:pb-[52px]' : 'lg:pb-0'}`}
+      >
+        {paneContent}
+      </aside>
+
+      {/* Mobile Slide-Up Study Notes Bottom Sheet (<lg) */}
+      <div
+        className="lg:hidden fixed inset-0 z-50 flex items-end bg-black/50 backdrop-blur-[2px]"
+        onClick={onClose}
+      >
+        <aside
+          role="dialog"
+          aria-modal="true"
+          aria-label="Study notes and highlights"
+          onClick={(e) => e.stopPropagation()}
+          className="w-full h-[84dvh] max-h-[84dvh] rounded-t-2xl border-t border-x border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-2xl flex flex-col overflow-hidden pb-safe animate-folio-sheet-up"
+        >
+          <div className="pt-2.5 pb-1 flex justify-center shrink-0">
+            <div className="w-10 h-1 rounded-full bg-[var(--border-strong)]" />
+          </div>
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">{paneContent}</div>
+        </aside>
+      </div>
+    </>
   );
 };

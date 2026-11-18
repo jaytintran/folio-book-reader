@@ -37,6 +37,7 @@ import type {
   ReaderPreferences,
   SearchMatch,
 } from '../../types/library';
+import {BottomSheet} from '../ui/BottomSheet';
 import {PdfViewport} from './PdfViewport';
 import {ReaderDrawer, type ReaderDrawerTab} from './ReaderDrawer';
 import {ReaderScrubber, type ScrubberMarker} from './ReaderScrubber';
@@ -108,6 +109,17 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const [bottomRevealed, setBottomRevealed] = useState(true);
   const [hoveringTopBar, setHoveringTopBar] = useState(false);
   const [hoveringBottomBar, setHoveringBottomBar] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 1024 : false
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 1023px)');
+    const onChange = () => setIsMobileViewport(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
 
   // Full-text Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -234,56 +246,61 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
+  // On mobile (<1024px), reader bars stay retractable via center-tap without overwriting desktop pin preferences
+  const effectivePinHeader = isMobileViewport ? false : prefs.pinHeader;
+  const effectivePinBottomBar = isMobileViewport ? false : prefs.pinBottomBar;
+
   // Reveal unpinned bars independently when pointer enters top or bottom hover zones
   const handlePointerMove = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!prefs.pinHeader && e.clientY <= 56 && !headerRevealed) {
+      if (isMobileViewport) return;
+      if (!effectivePinHeader && e.clientY <= 56 && !headerRevealed) {
         setHeaderRevealed(true);
       }
-      if (!prefs.pinBottomBar && e.clientY >= window.innerHeight - 64 && !bottomRevealed) {
+      if (!effectivePinBottomBar && e.clientY >= window.innerHeight - 64 && !bottomRevealed) {
         setBottomRevealed(true);
       }
     },
-    [prefs.pinHeader, prefs.pinBottomBar, headerRevealed, bottomRevealed]
+    [isMobileViewport, effectivePinHeader, effectivePinBottomBar, headerRevealed, bottomRevealed]
   );
 
   const headerVisible =
-    prefs.pinHeader ||
+    effectivePinHeader ||
     headerRevealed ||
     hoveringTopBar ||
     typographyOpen ||
-    (drawerOpen && !prefs.pinLeftSidebar) ||
+    (drawerOpen && (isMobileViewport || !prefs.pinLeftSidebar)) ||
     loading ||
     Boolean(error);
 
   const bottomBarVisible =
-    prefs.pinBottomBar || bottomRevealed || hoveringBottomBar;
+    effectivePinBottomBar || bottomRevealed || hoveringBottomBar;
 
   // Floating overlay states (only true when a bar is UNPINNED and currently floating over the workspace)
-  const topOverlayActive = !prefs.pinHeader && headerVisible;
-  const bottomOverlayActive = !prefs.pinBottomBar && bottomBarVisible;
+  const topOverlayActive = !effectivePinHeader && headerVisible;
+  const bottomOverlayActive = !effectivePinBottomBar && bottomBarVisible;
 
   const handleScrollDirection = useCallback(
     (dir: 'up' | 'down') => {
       if (dir === 'down') {
-        if (!prefs.pinHeader) setHeaderRevealed(false);
-        if (!prefs.pinBottomBar) setBottomRevealed(false);
+        if (!effectivePinHeader) setHeaderRevealed(false);
+        if (!effectivePinBottomBar) setBottomRevealed(false);
       } else {
-        if (!prefs.pinHeader) setHeaderRevealed(true);
-        if (!prefs.pinBottomBar) setBottomRevealed(true);
+        if (!effectivePinHeader) setHeaderRevealed(true);
+        if (!effectivePinBottomBar) setBottomRevealed(true);
       }
     },
-    [prefs.pinHeader, prefs.pinBottomBar]
+    [effectivePinHeader, effectivePinBottomBar]
   );
 
   const handleCenterTap = useCallback(() => {
-    if (prefs.pinHeader && prefs.pinBottomBar) return;
+    if (effectivePinHeader && effectivePinBottomBar) return;
     const anyUnpinnedVisible =
-      (!prefs.pinHeader && headerRevealed) || (!prefs.pinBottomBar && bottomRevealed);
+      (!effectivePinHeader && headerRevealed) || (!effectivePinBottomBar && bottomRevealed);
     const next = !anyUnpinnedVisible;
-    if (!prefs.pinHeader) setHeaderRevealed(next);
-    if (!prefs.pinBottomBar) setBottomRevealed(next);
-  }, [prefs.pinHeader, prefs.pinBottomBar, headerRevealed, bottomRevealed]);
+    if (!effectivePinHeader) setHeaderRevealed(next);
+    if (!effectivePinBottomBar) setBottomRevealed(next);
+  }, [effectivePinHeader, effectivePinBottomBar, headerRevealed, bottomRevealed]);
 
   // Compute word-count reading metrics for reflowable books
   const reflowableMetrics = useMemo(() => {
@@ -675,7 +692,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       ? {pageNumber: activeSearchMatch.unitIndex, query: searchQuery.trim()}
       : null;
 
-  const topChromeContainerClass = prefs.pinHeader
+  const topChromeContainerClass = effectivePinHeader
     ? 'relative z-30 shrink-0'
     : `fixed top-0 left-0 right-0 z-30 transition-transform duration-180 ease-out ${
         headerVisible ? 'translate-y-0' : '-translate-y-full pointer-events-none'
@@ -711,9 +728,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           }}
         />
 
-        <header className="h-12 px-4 sm:px-5 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]/96 backdrop-blur-xs flex items-center justify-between gap-3">
+        <header
+          className={`h-12 px-2.5 sm:px-5 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]/96 backdrop-blur-xs flex items-center justify-between gap-2 sm:gap-3 ${
+            openBooks.length === 0 ? 'pt-safe lg:pt-0' : ''
+          }`}
+        >
           {/* Left: Contents & Search */}
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
             <button
               type="button"
               onClick={() => {
@@ -721,7 +742,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                 setDrawerOpen(true);
               }}
               title="Table of contents and bookmarks"
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+              className={`min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 inline-flex items-center justify-center gap-1.5 px-2 lg:px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
                 prefs.pinLeftSidebar && drawerTab === 'toc'
                   ? 'text-[var(--accent)] bg-[var(--bg-accent-subtle)]'
                   : 'text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
@@ -739,7 +760,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               }}
               title="Search inside book (Ctrl+F)"
               aria-label="Search inside book"
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+              className={`min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 inline-flex items-center justify-center gap-1.5 px-2 lg:px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
                 searchQuery.trim().length >= 2 || (prefs.pinLeftSidebar && drawerTab === 'search')
                   ? 'text-[var(--accent)] bg-[var(--bg-accent-subtle)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
@@ -758,7 +779,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           </div>
 
           {/* Right: Layout Switch, Study Pane, Bookmark, Typography, Theme, Pin Header */}
-          <div className="flex items-center gap-1 shrink-0 relative">
+          <div className="flex items-center gap-0.5 sm:gap-1 shrink-0 relative">
             {book.format !== 'pdf' && (
               <button
                 type="button"
@@ -794,7 +815,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               onClick={() => setStudyPaneOpen((v) => !v)}
               title="Toggle side-by-side Notes & Highlights study pane"
               aria-label="Toggle Study Pane"
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+              className={`min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 inline-flex items-center justify-center gap-1.5 px-2 lg:px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
                 studyPaneOpen
                   ? 'text-[var(--accent)] bg-[var(--bg-accent-subtle)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
@@ -814,7 +835,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               onClick={handleToggleBookmark}
               title={isCurrentUnitBookmarked ? 'Remove bookmark' : 'Bookmark this location'}
               aria-label={isCurrentUnitBookmarked ? 'Remove bookmark' : 'Bookmark current location'}
-              className={`p-2 rounded-md transition-colors cursor-pointer ${
+              className={`min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 inline-flex items-center justify-center p-2 rounded-md transition-colors cursor-pointer ${
                 isCurrentUnitBookmarked
                   ? 'text-[var(--accent)] bg-[var(--bg-accent-subtle)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
@@ -828,7 +849,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               onClick={() => setTypographyOpen((v) => !v)}
               title="Typography and display settings"
               aria-label="Typography settings"
-              className={`p-2 rounded-md transition-colors cursor-pointer ${
+              className={`min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 inline-flex items-center justify-center p-2 rounded-md transition-colors cursor-pointer ${
                 typographyOpen
                   ? 'text-[var(--accent)] bg-[var(--bg-accent-subtle)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
@@ -842,14 +863,14 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               onClick={onToggleTheme}
               title={`Switch to ${prefs.theme === 'sepia' ? 'Dark' : 'Sepia'} theme`}
               aria-label="Toggle Sepia and Dark theme"
-              className="p-2 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
+              className="hidden sm:inline-flex p-2 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
             >
               {prefs.theme === 'sepia' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
             </button>
 
-            <div className="h-4 w-px bg-[var(--border-subtle)] mx-0.5" />
+            <div className="hidden lg:block h-4 w-px bg-[var(--border-subtle)] mx-0.5" />
 
-            {/* Independent Pin Header Toggle */}
+            {/* Independent Pin Header Toggle (Desktop lg+) */}
             <button
               type="button"
               onClick={() => {
@@ -864,7 +885,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               }
               aria-label={prefs.pinHeader ? 'Unpin header' : 'Pin header'}
               aria-pressed={prefs.pinHeader}
-              className={`p-2 rounded-md transition-colors cursor-pointer ${
+              className={`hidden lg:inline-flex p-2 rounded-md transition-colors cursor-pointer ${
                 prefs.pinHeader
                   ? 'text-[var(--accent)] bg-[var(--bg-accent-subtle)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
@@ -873,8 +894,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               <Pin className={`w-3.5 h-3.5 ${prefs.pinHeader ? 'fill-current' : ''}`} />
             </button>
 
+            {/* Desktop Typography Dropdown Popover (lg+) — unchanged */}
             {typographyOpen && (
-              <>
+              <div className="hidden lg:block">
                 <div
                   className="fixed inset-0 z-30"
                   onClick={() => setTypographyOpen(false)}
@@ -887,7 +909,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                     onReset={onResetPrefs}
                   />
                 </div>
-              </>
+              </div>
             )}
           </div>
         </header>
@@ -965,8 +987,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             pageNumber={unitIndex}
             jumpNonce={pdfJumpNonce}
             prefs={prefs}
-            headerPinned={prefs.pinHeader}
-            bottomBarPinned={prefs.pinBottomBar}
+            headerPinned={effectivePinHeader}
+            bottomBarPinned={effectivePinBottomBar}
             searchHighlight={activePdfSearch}
             onPageChange={(nextPage, isUserScroll) => handleJumpToUnit(nextPage, 0, isUserScroll)}
             onCreateHighlight={handleCreateHighlight}
@@ -982,8 +1004,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             prefs={prefs}
             chapterHighlights={chapterHighlights}
             searchHighlight={activeReflowableSearch}
-            headerPinned={prefs.pinHeader}
-            bottomBarPinned={prefs.pinBottomBar}
+            headerPinned={effectivePinHeader}
+            bottomBarPinned={effectivePinBottomBar}
             topOverlayActive={topOverlayActive}
             bottomOverlayActive={bottomOverlayActive}
             onChapterChange={(nextCh, ratio = 0) => handleJumpToUnit(nextCh, ratio)}
@@ -998,7 +1020,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           />
         ) : null}
 
-        {/* Docked Side-by-Side Split Study Pane */}
+        {/* Docked Side-by-Side Split Study Pane (Desktop) / Slide-Up Sheet (Mobile) */}
         <StudyPane
           isOpen={studyPaneOpen}
           topOverlayActive={topOverlayActive}
@@ -1016,11 +1038,29 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         />
       </div>
 
+      {/* Mobile Typography Bottom Sheet (<lg) */}
+      {isMobileViewport && (
+        <BottomSheet
+          isOpen={typographyOpen}
+          onClose={() => setTypographyOpen(false)}
+          title="Typography & Display"
+          ariaLabel="Reader appearance settings"
+        >
+          <TypographyPopover
+            format={book.format}
+            prefs={prefs}
+            embeddedInSheet
+            onUpdate={onUpdatePrefs}
+            onReset={onResetPrefs}
+          />
+        </BottomSheet>
+      )}
+
       {/* Bottom Scrubber: Docked flex footer when pinned, retractable fixed overlay when unpinned */}
       {!loading && !error && (
         <ReaderScrubber
           visible={bottomBarVisible}
-          isPinned={prefs.pinBottomBar}
+          isPinned={effectivePinBottomBar}
           onTogglePin={() => {
             const next = !prefs.pinBottomBar;
             onUpdatePrefs({pinBottomBar: next});

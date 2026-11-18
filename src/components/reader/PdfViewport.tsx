@@ -384,12 +384,61 @@ export const PdfViewport: React.FC<PdfViewportProps> = ({
     }
   }, [isContinuous, pageNumber, onPageChange, onScrollDirection]);
 
+  const touchStartRef = useRef<{x: number; y: number; time: number} | null>(null);
+  const justSwipedRef = useRef(false);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (window.innerWidth >= 1024 || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    touchStartRef.current = {x: t.clientX, y: t.clientY, time: Date.now()};
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (window.innerWidth >= 1024 || !touchStartRef.current || e.changedTouches.length !== 1) return;
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
+
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    const elapsed = Date.now() - start.time;
+
+    if (elapsed < 600 && Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      justSwipedRef.current = true;
+      window.setTimeout(() => {
+        justSwipedRef.current = false;
+      }, 280);
+      if (dx < 0 && pageNumber < pdf.numPages) {
+        onPageChange(pageNumber + 1, false);
+      } else if (dx > 0 && pageNumber > 1) {
+        onPageChange(pageNumber - 1, false);
+      }
+    }
+  };
+
   const handleCanvasClick = (e: React.MouseEvent) => {
+    if (justSwipedRef.current) return;
     const el = e.target as HTMLElement | null;
     if (!el || el.closest('button, input, textarea')) return;
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
     setSelectionMenu(null);
+
+    if (window.innerWidth < 1024) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
+      if (relX < 0.2) {
+        if (pageNumber > 1) onPageChange(pageNumber - 1, false);
+        return;
+      }
+      if (relX > 0.8) {
+        if (pageNumber < pdf.numPages) onPageChange(pageNumber + 1, false);
+        return;
+      }
+    }
+
     onCenterTap?.();
   };
 
@@ -428,7 +477,9 @@ export const PdfViewport: React.FC<PdfViewportProps> = ({
         ref={scrollContainerRef}
         onScroll={handleScroll}
         onClick={handleCanvasClick}
-        className={`flex-1 overflow-auto px-5 flex flex-col items-center gap-6 ${
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        className={`flex-1 overflow-auto px-3 sm:px-5 flex flex-col items-center gap-6 ${
           headerPinned ? 'pt-8' : 'pt-28'
         } ${bottomBarPinned ? 'pb-12' : 'pb-24'}`}
       >

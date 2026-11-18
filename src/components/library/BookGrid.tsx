@@ -1,4 +1,4 @@
-import {Check, Info, Pencil, Star, X} from 'lucide-react';
+import {Check, Info, MoreHorizontal, Pencil, Star, X} from 'lucide-react';
 import React from 'react';
 import type {
   BookRecord,
@@ -23,15 +23,16 @@ interface BookGridProps {
   onToggleFavorite: (book: BookRecord) => void;
   onToggleSelect: (bookId: string, shiftKey: boolean) => void;
   onRemoveFromFolder?: (book: BookRecord) => void;
+  onQuickAction?: (book: BookRecord) => void;
 }
 
 const GRID_COLUMNS_BY_SIZE: Record<CoverSize, string> = {
   compact:
-    'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-x-4 gap-y-7',
+    'grid-cols-2 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-x-4 gap-y-6 sm:gap-y-7',
   standard:
-    'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-x-6 gap-y-9',
+    'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-x-4 sm:gap-x-6 gap-y-6 sm:gap-y-9',
   large:
-    'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-x-7 gap-y-10',
+    'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-x-5 sm:gap-x-7 gap-y-7 sm:gap-y-10',
 };
 
 export const BookGrid: React.FC<BookGridProps> = ({
@@ -49,6 +50,7 @@ export const BookGrid: React.FC<BookGridProps> = ({
   onToggleFavorite,
   onToggleSelect,
   onRemoveFromFolder,
+  onQuickAction,
 }) => {
   const categoryNameById = new Map(categories.map((c) => [c.id, c.name]));
 
@@ -58,7 +60,9 @@ export const BookGrid: React.FC<BookGridProps> = ({
       onToggleSelect(book.id, e.shiftKey);
       return;
     }
-    if (inspectorOpen) {
+    const isDesktopInspector =
+      inspectorOpen && typeof window !== 'undefined' && window.innerWidth >= 1280;
+    if (isDesktopInspector) {
       onInspectBook(book);
     } else {
       onOpenBook(book);
@@ -168,9 +172,9 @@ export const BookGrid: React.FC<BookGridProps> = ({
                 <Check className="w-3.5 h-3.5 stroke-[2.5]" />
               </button>
 
-              {/* Quick Actions (top-right) */}
+              {/* Desktop Hover Quick Actions (top-right, lg+ only) */}
               <div
-                className={`absolute top-2 right-2 flex items-center gap-1 transition-opacity ${
+                className={`hidden lg:flex absolute top-2 right-2 items-center gap-1 transition-opacity ${
                   book.isFavorite
                     ? 'opacity-100'
                     : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
@@ -231,6 +235,33 @@ export const BookGrid: React.FC<BookGridProps> = ({
                   </button>
                 )}
               </div>
+
+              {/* Mobile Always-Accessible Quick Action Button (<lg, 44px hitbox) */}
+              {onQuickAction && !isSelectionMode && (
+                <button
+                  type="button"
+                  aria-label={`More actions for ${book.title}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onQuickAction(book);
+                  }}
+                  className="lg:hidden absolute top-0 right-0 w-11 h-11 flex items-start justify-end p-1.5 cursor-pointer"
+                >
+                  <span className="w-7 h-7 rounded-md flex items-center justify-center bg-[var(--bg-elevated)]/92 backdrop-blur-xs border border-[var(--border-subtle)] text-[var(--text-primary)] shadow-xs">
+                    <MoreHorizontal className="w-4 h-4" />
+                  </span>
+                </button>
+              )}
+
+              {/* Subtle Favorite Badge on Mobile Cover when favorited */}
+              {book.isFavorite && !isSelectionMode && (
+                <span
+                  aria-hidden="true"
+                  className="lg:hidden absolute top-1.5 left-1.5 w-6 h-6 rounded-md flex items-center justify-center bg-[var(--bg-elevated)]/90 border border-[var(--border-subtle)]"
+                >
+                  <Star className="w-3 h-3 fill-[var(--accent)] text-[var(--accent)]" />
+                </span>
+              )}
             </div>
 
             {/* Clean Unboxed Metadata */}

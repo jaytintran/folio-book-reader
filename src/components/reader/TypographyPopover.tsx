@@ -16,6 +16,7 @@ import type {BookFormat, ReaderPreferences} from '../../types/library';
 interface TypographyPopoverProps {
   format: BookFormat;
   prefs: ReaderPreferences;
+  embeddedInSheet?: boolean;
   onUpdate: (patch: Partial<ReaderPreferences>) => void;
   onReset: () => void;
 }
@@ -23,6 +24,7 @@ interface TypographyPopoverProps {
 export const TypographyPopover: React.FC<TypographyPopoverProps> = ({
   format,
   prefs,
+  embeddedInSheet = false,
   onUpdate,
   onReset,
 }) => {
@@ -30,9 +32,13 @@ export const TypographyPopover: React.FC<TypographyPopoverProps> = ({
 
   return (
     <div
-      role="dialog"
-      aria-label="Reader appearance settings"
-      className="w-[340px] max-h-[calc(100vh-5rem)] overflow-y-auto rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-2xl p-5 space-y-5"
+      role={embeddedInSheet ? undefined : 'dialog'}
+      aria-label={embeddedInSheet ? undefined : 'Reader appearance settings'}
+      className={
+        embeddedInSheet
+          ? 'w-full p-4 space-y-5'
+          : 'w-[340px] max-h-[calc(100vh-5rem)] overflow-y-auto rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-2xl p-5 space-y-5'
+      }
     >
       {/* Theme Toggle */}
       <div>

@@ -93,8 +93,8 @@ export const ReaderScrubber: React.FC<ReaderScrubberProps> = ({
       : markers.filter((_, i) => i % Math.ceil(markers.length / 40) === 0);
 
   const positioningClass = isPinned
-    ? 'relative z-30 shrink-0 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)]'
-    : `fixed bottom-0 left-0 right-0 z-30 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)]/96 backdrop-blur-xs transition-transform duration-180 ease-out ${
+    ? 'relative z-30 shrink-0 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)] pb-safe lg:pb-0'
+    : `fixed bottom-0 left-0 right-0 z-30 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)]/96 backdrop-blur-xs pb-safe lg:pb-0 transition-transform duration-180 ease-out ${
         visible ? 'translate-y-0' : 'translate-y-full pointer-events-none'
       }`;
 
@@ -104,7 +104,7 @@ export const ReaderScrubber: React.FC<ReaderScrubberProps> = ({
       onMouseLeave={onMouseLeave}
       className={positioningClass}
     >
-      <div className="px-4 sm:px-5 h-13 flex items-center gap-4">
+      <div className="px-3 sm:px-5 h-13 flex items-center gap-2 sm:gap-4">
         {/* Left: Current location & chapter time left */}
         <div className="hidden md:flex flex-col min-w-[165px] max-w-[225px] shrink-0">
           <span className="text-[11px] font-medium text-[var(--text-primary)] truncate">
@@ -127,7 +127,7 @@ export const ReaderScrubber: React.FC<ReaderScrubberProps> = ({
             onClick={onStepPrev}
             title={format === 'pdf' ? 'Previous page' : 'Previous section or spread'}
             aria-label="Previous"
-            className="p-1.5 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer shrink-0"
+            className="min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center p-1.5 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer shrink-0"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -197,13 +197,13 @@ export const ReaderScrubber: React.FC<ReaderScrubberProps> = ({
             onClick={onStepNext}
             title={format === 'pdf' ? 'Next page' : 'Next section or spread'}
             aria-label="Next"
-            className="p-1.5 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer shrink-0"
+            className="min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center p-1.5 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer shrink-0"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Right: Book time left, percentage & independent Pin Bottom Bar toggle */}
+        {/* Right: Book time left, percentage & independent Pin Bottom Bar toggle (desktop lg+) */}
         <div className="flex items-center gap-2 text-right shrink-0">
           {format !== 'pdf' && (
             <span className="hidden sm:inline font-mono-tabular text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
@@ -213,14 +213,14 @@ export const ReaderScrubber: React.FC<ReaderScrubberProps> = ({
           <span className="font-mono-tabular text-xs font-medium text-[var(--text-primary)] w-9 text-right">
             {Math.round(displayedPct)}%
           </span>
-          <div className="h-4 w-px bg-[var(--border-subtle)] mx-0.5" />
+          <div className="hidden lg:block h-4 w-px bg-[var(--border-subtle)] mx-0.5" />
           <button
             type="button"
             onClick={onTogglePin}
             title={isPinned ? 'Unpin bottom bar (auto-hide on scroll)' : 'Pin bottom bar in place'}
             aria-label={isPinned ? 'Unpin bottom bar' : 'Pin bottom bar'}
             aria-pressed={isPinned}
-            className={`p-1.5 rounded-md transition-colors cursor-pointer ${
+            className={`hidden lg:inline-flex p-1.5 rounded-md transition-colors cursor-pointer ${
               isPinned
                 ? 'text-[var(--accent)] bg-[var(--bg-accent-subtle)]'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'

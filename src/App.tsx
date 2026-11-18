@@ -48,6 +48,14 @@ import {
   type ActiveLibraryFilter,
 } from './components/library/LibrarySidebar';
 import {MetadataDrawer} from './components/library/MetadataDrawer';
+import {MobileBookActionSheet} from './components/library/MobileBookActionSheet';
+import {MobileBookList} from './components/library/MobileBookList';
+import {MobileBottomNav} from './components/library/MobileBottomNav';
+import {MobileFilterSortSheet} from './components/library/MobileFilterSortSheet';
+import {
+  MobileOrganizeSheet,
+  type MobileOrganizePayload,
+} from './components/library/MobileOrganizeSheet';
 import {ViewFoldersSection} from './components/library/ViewFoldersSection';
 import {OfflineIndicator} from './components/pwa/OfflineIndicator';
 import {ReaderTabStrip} from './components/reader/ReaderTabStrip';
@@ -155,6 +163,11 @@ export default function App() {
   const [editingBookId, setEditingBookId] = useState<string | null>(null);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+  // Mobile-specific sheets
+  const [mobileFilterSheetOpen, setMobileFilterSheetOpen] = useState(false);
+  const [quickActionBookId, setQuickActionBookId] = useState<string | null>(null);
+  const [mobileOrganizeBookIds, setMobileOrganizeBookIds] = useState<string[] | null>(null);
 
   // Per-view folder drill-in & add-books modal state
   const [activeViewFolderId, setActiveViewFolderId] = useState<string | null>(null);
@@ -963,9 +976,9 @@ export default function App() {
 
   // Per-View Folders CRUD & Book Assignment
   const handleCreateViewFolder = useCallback(
-    async (name: string) => {
+    async (name: string): Promise<ViewFolderRecord | undefined> => {
       const trimmed = name.trim();
-      if (!trimmed) return;
+      if (!trimmed) return undefined;
       const folder: ViewFolderRecord = {
         id: makeId('vfolder'),
         viewKey: activeViewKey,
@@ -976,6 +989,7 @@ export default function App() {
       await libraryDb.saveViewFolder(folder);
       setViewFolders((prev) => [...prev, folder]);
       notify(`Created folder "${trimmed}" in ${activeViewLabel}`, 'success');
+      return folder;
     },
     [activeViewKey, activeViewLabel, notify]
   );
@@ -1287,6 +1301,95 @@ export default function App() {
     [books, selectedIds, notify]
   );
 
+  // Mobile Organize & Move sheet apply (1 or N books)
+  const handleApplyMobileOrganize = useCallback(
+    async (payload: MobileOrganizePayload) => {
+      const bookIdSet = new Set(payload.bookIds);
+      if (bookIdSet.size === 0) return;
+
+      // 1. Update per-view folders
+      if (payload.addToViewFolderIds.length > 0 || payload.removeFromViewFolderIds.length > 0) {
+        const addSet = new Set(payload.addToViewFolderIds);
+        const removeSet = new Set(payload.removeFromViewFolderIds);
+        const updatedFolders: ViewFolderRecord[] = [];
+        const nextViewFolders = viewFolders.map((vf) => {
+          if (addSet.has(vf.id)) {
+            const nextBookIds = Array.from(new Set([...vf.bookIds, ...payload.bookIds]));
+            const updated: ViewFolderRecord = {...vf, bookIds: nextBookIds};
+            updatedFolders.push(updated);
+            return updated;
+          }
+          if (removeSet.has(vf.id)) {
+            const nextBookIds = vf.bookIds.filter((id) => !bookIdSet.has(id));
+            const updated: ViewFolderRecord = {...vf, bookIds: nextBookIds};
+            updatedFolders.push(updated);
+            return updated;
+          }
+          return vf;
+        });
+
+        await Promise.all(updatedFolders.map((vf) => libraryDb.saveViewFolder(vf)));
+        setViewFolders(nextViewFolders);
+      }
+
+      // 2. Update books (Sidebar folder, Category, Tags)
+      const needsBookUpdate =
+        payload.sidebarFolderChange.mode !== 'keep' ||
+        payload.categoryChange.mode !== 'keep' ||
+        payload.addTags.length > 0 ||
+        payload.removeTags.length > 0;
+
+      if (needsBookUpdate) {
+        const removeTagLower = new Set(payload.removeTags.map((t) => t.toLowerCase()));
+        const targets = books.filter((b) => bookIdSet.has(b.id));
+        const updatedBooks = targets.map((book) => {
+          let nextFolderId = book.folderId;
+          if (payload.sidebarFolderChange.mode === 'set') {
+            nextFolderId = payload.sidebarFolderChange.folderId;
+          } else if (payload.sidebarFolderChange.mode === 'clear') {
+            nextFolderId = null;
+          }
+
+          let nextCategoryId = book.categoryId;
+          if (payload.categoryChange.mode === 'set') {
+            nextCategoryId = payload.categoryChange.categoryId;
+          } else if (payload.categoryChange.mode === 'clear') {
+            nextCategoryId = null;
+          }
+
+          const nextTags = book.tags.filter((t) => !removeTagLower.has(t.toLowerCase()));
+          for (const t of payload.addTags) {
+            if (!nextTags.some((e) => e.toLowerCase() === t.toLowerCase())) {
+              nextTags.push(t);
+            }
+          }
+
+          return {
+            ...book,
+            folderId: nextFolderId,
+            categoryId: nextCategoryId,
+            tags: nextTags,
+          };
+        });
+
+        await libraryDb.updateBooksBatch(updatedBooks);
+        const updatedMap = new Map(updatedBooks.map((b) => [b.id, b]));
+        setBooks((prev) => prev.map((b) => updatedMap.get(b.id) ?? b));
+      }
+
+      if (payload.bookIds.length > 1) {
+        handleClearSelection();
+      }
+      notify(
+        payload.bookIds.length === 1
+          ? 'Book organization updated'
+          : `Organized ${payload.bookIds.length} books`,
+        'success'
+      );
+    },
+    [books, viewFolders, handleClearSelection, notify]
+  );
+
   // Bulk Favorite toggle
   const handleBulkFavorite = useCallback(async () => {
     const targetBooks = books.filter((b) => selectedIds.has(b.id));
@@ -1436,6 +1539,22 @@ export default function App() {
     [books, selectedIds]
   );
 
+  const quickActionBook = useMemo(
+    () => (quickActionBookId ? books.find((b) => b.id === quickActionBookId) ?? null : null),
+    [books, quickActionBookId]
+  );
+
+  const mobileOrganizeTargetBooks = useMemo(() => {
+    if (!mobileOrganizeBookIds || mobileOrganizeBookIds.length === 0) return [];
+    const idSet = new Set(mobileOrganizeBookIds);
+    return books.filter((b) => idSet.has(b.id));
+  }, [books, mobileOrganizeBookIds]);
+
+  const mobileActiveFilterCount =
+    (formatFilter !== 'all' ? 1 : 0) +
+    (libraryPrefs.groupBy !== 'none' ? 1 : 0) +
+    (sortField !== 'addedAt' ? 1 : 0);
+
   const allVisibleSelected =
     displayedBooks.length > 0 && displayedBooks.every((b) => selectedIds.has(b.id));
 
@@ -1577,8 +1696,69 @@ export default function App() {
 
         {/* Main Library Workspace */}
         <div className="flex-1 min-w-0 flex flex-col h-full">
-          {/* Top Workspace Header */}
-          <header className="h-14 px-5 lg:px-8 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between gap-6 shrink-0">
+          {/* Mobile Compact Top Header (< lg) */}
+          <header
+            className={`lg:hidden border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] shrink-0 ${
+              openBookRecords.length === 0 ? 'pt-safe' : ''
+            }`}
+          >
+            <div className="h-[52px] px-3 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => setMobileSidebarOpen(true)}
+                  aria-label="Open navigation drawer"
+                  className="min-w-[44px] min-h-[44px] -ml-1.5 flex items-center justify-center rounded-lg text-[var(--text-secondary)] active:bg-[var(--bg-surface-hover)] cursor-pointer shrink-0"
+                >
+                  <Menu className="w-5 h-5" />
+                </button>
+                <h1 className="font-serif-editorial text-lg font-semibold text-[var(--text-primary)] truncate">
+                  {activeViewHeading.title}
+                </h1>
+                <span className="font-mono-tabular text-xs text-[var(--text-muted)] shrink-0 ml-0.5">
+                  {isHighlightsHubActive ? allHighlights.length : visibleBooks.length}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={toggleTheme}
+                  aria-label={`Switch to ${prefs.theme === 'sepia' ? 'Dark' : 'Sepia'} theme`}
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-[var(--text-primary)] active:bg-[var(--bg-surface-hover)] cursor-pointer"
+                >
+                  {prefs.theme === 'sepia' ? (
+                    <Moon className="w-[18px] h-[18px] text-[var(--accent)]" />
+                  ) : (
+                    <Sun className="w-[18px] h-[18px] text-[var(--accent)]" />
+                  )}
+                </button>
+
+                {books.length > 0 && !isHighlightsHubActive && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isSelectionMode) {
+                        handleClearSelection();
+                      } else {
+                        setIsSelectionMode(true);
+                      }
+                    }}
+                    className={`min-h-[38px] px-2.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer whitespace-nowrap ${
+                      isSelectionMode || selectedIds.size > 0
+                        ? 'border-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)]'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-primary)]'
+                    }`}
+                  >
+                    {isSelectionMode ? 'Done' : 'Select'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </header>
+
+          {/* Desktop Top Workspace Header (lg+, unchanged) */}
+          <header className="hidden lg:flex h-14 px-5 lg:px-8 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] items-center justify-between gap-6 shrink-0">
             <div className="flex items-center gap-3 min-w-0">
               <button
                 type="button"
@@ -1655,9 +1835,67 @@ export default function App() {
             </div>
           </header>
 
-          {/* Secondary Filter / Search / Group / Display Toolbar (Catalog views) */}
+          {/* Mobile Compact Search, Filter Sheet & Grid/List Bar (< lg) */}
           {books.length > 0 && !isHighlightsHubActive && (
-            <div className="px-5 lg:px-8 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)] flex flex-wrap items-center justify-between gap-3 shrink-0">
+            <div className="flex lg:hidden px-4 py-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)] items-center gap-2 shrink-0">
+              <div className="relative flex-1 min-w-0">
+                <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search books, authors..."
+                  aria-label="Search library"
+                  className="w-full h-10 pl-9 pr-9 text-sm rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-input)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="Clear search"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-[var(--text-muted)] cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setMobileFilterSheetOpen(true)}
+                aria-label="Filter and sort options"
+                className={`relative min-w-[42px] h-10 px-2.5 rounded-lg border inline-flex items-center justify-center gap-1.5 text-xs font-medium transition-colors cursor-pointer shrink-0 ${
+                  mobileActiveFilterCount > 0
+                    ? 'border-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)]'
+                    : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)]'
+                }`}
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                {mobileActiveFilterCount > 0 && (
+                  <span className="font-mono-tabular text-[11px] font-semibold">
+                    {mobileActiveFilterCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setViewMode((m) => (m === 'grid' ? 'table' : 'grid'))}
+                aria-label={viewMode === 'grid' ? 'Switch to compact list view' : 'Switch to grid view'}
+                className="min-w-[42px] h-10 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] inline-flex items-center justify-center cursor-pointer shrink-0"
+              >
+                {viewMode === 'grid' ? (
+                  <List className="w-4 h-4" />
+                ) : (
+                  <LayoutGrid className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Desktop Secondary Filter / Search / Group / Display Toolbar (lg+, unchanged) */}
+          {books.length > 0 && !isHighlightsHubActive && (
+            <div className="hidden lg:flex px-5 lg:px-8 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)] flex-wrap items-center justify-between gap-3 shrink-0">
               {/* Search + Cmd+K Trigger & Format Filter */}
               <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[240px]">
                 <div className="relative flex-1 max-w-sm min-w-[200px]">
@@ -1877,22 +2115,26 @@ export default function App() {
                 </div>
               </div>
             ) : isHighlightsHubActive ? (
-              <HighlightsHubView
-                books={books}
-                highlights={allHighlights}
-                onOpenPassage={(book, unitIndex) => void openBookInTab(book.id, unitIndex)}
-                onUpdateHighlight={(updated) => void handleUpdateHighlight(updated)}
-                onDeleteHighlight={(id) => void handleDeleteHighlight(id)}
-                onBackToBooks={() => setActiveFilter({kind: 'smart', id: 'all'})}
-              />
+              <div className="flex-1 flex flex-col pb-20 lg:pb-0">
+                <HighlightsHubView
+                  books={books}
+                  highlights={allHighlights}
+                  onOpenPassage={(book, unitIndex) => void openBookInTab(book.id, unitIndex)}
+                  onUpdateHighlight={(updated) => void handleUpdateHighlight(updated)}
+                  onDeleteHighlight={(id) => void handleDeleteHighlight(id)}
+                  onBackToBooks={() => setActiveFilter({kind: 'smart', id: 'all'})}
+                />
+              </div>
             ) : books.length === 0 ? (
-              <EmptyLibraryDropzone
-                onFilesSelected={(files) => void handleImportFiles(files)}
-                onBrowseClick={() => fileInputRef.current?.click()}
-                isImporting={isImporting}
-              />
+              <div className="flex-1 flex flex-col pb-20 lg:pb-0">
+                <EmptyLibraryDropzone
+                  onFilesSelected={(files) => void handleImportFiles(files)}
+                  onBrowseClick={() => fileInputRef.current?.click()}
+                  isImporting={isImporting}
+                />
+              </div>
             ) : (
-              <div className="p-5 lg:p-8 pb-24 flex-1 flex flex-col">
+              <div className="p-4 sm:p-5 lg:p-8 pb-28 lg:pb-24 flex-1 flex flex-col">
                 {/* Reading Overview Strip + Continue Reading Shelf */}
                 {showContinueReadingShelf && (
                   <ContinueReadingShelf
@@ -2164,6 +2406,7 @@ export default function App() {
                                 onEditBook={(book) => setEditingBookId(book.id)}
                                 onToggleFavorite={(book) => void handleToggleFavorite(book)}
                                 onToggleSelect={handleToggleSelect}
+                                onQuickAction={(book) => setQuickActionBookId(book.id)}
                                 onRemoveFromFolder={
                                   activeDrilledFolder
                                     ? (book) =>
@@ -2175,24 +2418,39 @@ export default function App() {
                                 }
                               />
                             ) : (
-                              <BookTable
-                                books={group.books}
-                                categories={categories}
-                                folders={folders}
-                                selectedIds={selectedIds}
-                                allSelected={allVisibleSelected}
-                                inspectorOpen={libraryPrefs.inspectorOpen}
-                                inspectedBookId={inspectedBook?.id ?? null}
-                                sortField={sortField}
-                                sortDirection={sortDirection}
-                                onSortChange={handleSortFieldClick}
-                                onToggleSelect={handleToggleSelect}
-                                onToggleSelectAll={handleToggleSelectAllVisible}
-                                onOpenBook={(book) => void openBookInTab(book.id)}
-                                onInspectBook={handleInspectBook}
-                                onEditBook={(book) => setEditingBookId(book.id)}
-                                onToggleFavorite={(book) => void handleToggleFavorite(book)}
-                              />
+                              <>
+                                <div className="md:hidden">
+                                  <MobileBookList
+                                    books={group.books}
+                                    categories={categories}
+                                    selectedIds={selectedIds}
+                                    isSelectionMode={isSelectionMode}
+                                    onOpenBook={(book) => void openBookInTab(book.id)}
+                                    onQuickAction={(book) => setQuickActionBookId(book.id)}
+                                    onToggleSelect={handleToggleSelect}
+                                  />
+                                </div>
+                                <div className="hidden md:block">
+                                  <BookTable
+                                    books={group.books}
+                                    categories={categories}
+                                    folders={folders}
+                                    selectedIds={selectedIds}
+                                    allSelected={allVisibleSelected}
+                                    inspectorOpen={libraryPrefs.inspectorOpen}
+                                    inspectedBookId={inspectedBook?.id ?? null}
+                                    sortField={sortField}
+                                    sortDirection={sortDirection}
+                                    onSortChange={handleSortFieldClick}
+                                    onToggleSelect={handleToggleSelect}
+                                    onToggleSelectAll={handleToggleSelectAllVisible}
+                                    onOpenBook={(book) => void openBookInTab(book.id)}
+                                    onInspectBook={handleInspectBook}
+                                    onEditBook={(book) => setEditingBookId(book.id)}
+                                    onToggleFavorite={(book) => void handleToggleFavorite(book)}
+                                  />
+                                </div>
+                              </>
                             ))}
                         </section>
                       );
@@ -2237,7 +2495,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Floating Bulk Selection Bar */}
+      {/* Floating Bulk Selection Bar (Desktop) & Thumb-Zone Bottom Bar (Mobile) */}
       {!isHighlightsHubActive && (
         <BulkActionBar
           selectedCount={selectedIds.size}
@@ -2245,10 +2503,109 @@ export default function App() {
           onSelectAll={() => setSelectedIds(new Set(displayedBooks.map((b) => b.id)))}
           onClearSelection={handleClearSelection}
           onBulkEdit={() => setBulkEditOpen(true)}
+          onMobileOrganize={() => setMobileOrganizeBookIds(Array.from(selectedIds))}
           onBulkFavorite={() => void handleBulkFavorite()}
           onBulkDelete={() => setBulkDeleteOpen(true)}
         />
       )}
+
+      {/* Mobile Primary Bottom Tab Bar (< lg) */}
+      <MobileBottomNav
+        activeFilter={activeFilter}
+        selectedTagsCount={selectedTags.length}
+        isDrawerOpen={mobileSidebarOpen}
+        isSelectionActive={isSelectionMode || selectedIds.size > 0}
+        isImporting={isImporting}
+        onSelectLibrary={() => {
+          setActiveFilter({kind: 'smart', id: 'all'});
+          setSelectedTags([]);
+          setActiveViewFolderId(null);
+          setMobileSidebarOpen(false);
+        }}
+        onSelectReading={() => {
+          setActiveFilter({kind: 'smart', id: 'reading'});
+          setActiveViewFolderId(null);
+          setMobileSidebarOpen(false);
+        }}
+        onSelectHighlights={() => {
+          setActiveFilter({kind: 'smart', id: 'highlights'});
+          setActiveViewFolderId(null);
+          setMobileSidebarOpen(false);
+        }}
+        onOpenBrowseDrawer={() => setMobileSidebarOpen(true)}
+        onImportBooks={() => fileInputRef.current?.click()}
+      />
+
+      {/* Mobile Filter, Sort & Display Bottom Sheet */}
+      <MobileFilterSortSheet
+        isOpen={mobileFilterSheetOpen}
+        formatFilter={formatFilter}
+        groupBy={libraryPrefs.groupBy}
+        sortField={sortField}
+        sortDirection={sortDirection}
+        coverSize={libraryPrefs.coverSize}
+        cardDetails={libraryPrefs.cardDetails}
+        hasViewFolders={currentViewFolders.length > 0 && !activeDrilledFolder}
+        hideFiledBooks={hideFiledBooksInView}
+        hasActiveFilters={mobileActiveFilterCount > 0}
+        onFormatChange={setFormatFilter}
+        onGroupByChange={(groupBy) => {
+          updateLibraryPrefs({groupBy});
+          setCollapsedGroups(new Set());
+        }}
+        onSortFieldChange={(next) => {
+          setSortField(next);
+          setSortDirection(next === 'title' || next === 'author' ? 'asc' : 'desc');
+        }}
+        onToggleSortDirection={() => setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'))}
+        onCoverSizeChange={(coverSize) => updateLibraryPrefs({coverSize})}
+        onCardDetailsChange={updateCardDetails}
+        onToggleHideFiled={() => setHideFiledBooks(activeViewKey, !hideFiledBooksInView)}
+        onResetFilters={() => {
+          setFormatFilter('all');
+          updateLibraryPrefs({groupBy: 'none'});
+          setSortField('addedAt');
+          setSortDirection('desc');
+          setCollapsedGroups(new Set());
+        }}
+        onClose={() => setMobileFilterSheetOpen(false)}
+      />
+
+      {/* Mobile Per-Book Quick Action Sheet */}
+      <MobileBookActionSheet
+        book={quickActionBook}
+        activeDrilledFolderName={activeDrilledFolder?.name ?? null}
+        onClose={() => setQuickActionBookId(null)}
+        onReadBook={(book) => void openBookInTab(book.id)}
+        onInspectBook={handleInspectBook}
+        onOrganizeBook={(book) => setMobileOrganizeBookIds([book.id])}
+        onToggleFavorite={(book) => void handleToggleFavorite(book)}
+        onEditMetadata={(book) => setEditingBookId(book.id)}
+        onSelectBook={(book) => {
+          setIsSelectionMode(true);
+          handleToggleSelect(book.id, false);
+        }}
+        onRemoveFromViewFolder={
+          activeDrilledFolder
+            ? (book) => void handleRemoveBookFromViewFolder(book.id, activeDrilledFolder.id)
+            : undefined
+        }
+        onDeleteBook={(id) => void handleDeleteSingleBook(id)}
+      />
+
+      {/* Mobile Organize & Move Sheet (1 or N books) */}
+      <MobileOrganizeSheet
+        isOpen={mobileOrganizeTargetBooks.length > 0}
+        targetBooks={mobileOrganizeTargetBooks}
+        activeViewLabel={activeViewLabel}
+        currentViewFolders={currentViewFolders}
+        sidebarFolders={folders}
+        categories={categories}
+        existingTags={existingTagNames}
+        onCreateViewFolder={handleCreateViewFolder}
+        onApply={handleApplyMobileOrganize}
+        onClose={() => setMobileOrganizeBookIds(null)}
+      />
 
       {/* Cmd/Ctrl+K Command Palette */}
       <CommandPalette

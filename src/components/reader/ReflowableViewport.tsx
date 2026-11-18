@@ -452,7 +452,70 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
     setNoteText('');
   };
 
+  const touchStartRef = useRef<{x: number; y: number; time: number} | null>(null);
+  const justSwipedRef = useRef(false);
+
+  const turnPageMobile = useCallback(
+    (dir: 'prev' | 'next') => {
+      if (isSpread) {
+        if (dir === 'next') stepNext();
+        else stepPrev();
+        return;
+      }
+      const scroller = scrollContainerRef.current;
+      if (scroller) {
+        const pageStep = Math.max(240, scroller.clientHeight * 0.84);
+        if (dir === 'next') {
+          const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 24;
+          if (!atBottom) {
+            scroller.scrollBy({top: pageStep, behavior: 'smooth'});
+            return;
+          }
+          if (hasNextChapter) onChapterChange(chapterIndex + 1, 0);
+        } else {
+          if (scroller.scrollTop > 32) {
+            scroller.scrollBy({top: -pageStep, behavior: 'smooth'});
+            return;
+          }
+          if (hasPrevChapter) onChapterChange(chapterIndex - 1, 0);
+        }
+      } else {
+        if (dir === 'next') stepNext();
+        else stepPrev();
+      }
+    },
+    [isSpread, stepNext, stepPrev, hasNextChapter, hasPrevChapter, chapterIndex, onChapterChange]
+  );
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (window.innerWidth >= 1024 || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    touchStartRef.current = {x: t.clientX, y: t.clientY, time: Date.now()};
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (window.innerWidth >= 1024 || !touchStartRef.current || e.changedTouches.length !== 1) return;
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
+
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    const elapsed = Date.now() - start.time;
+
+    if (elapsed < 600 && Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      justSwipedRef.current = true;
+      window.setTimeout(() => {
+        justSwipedRef.current = false;
+      }, 280);
+      turnPageMobile(dx < 0 ? 'next' : 'prev');
+    }
+  };
+
   const handleCanvasClick = (e: React.MouseEvent) => {
+    if (justSwipedRef.current) return;
     const el = e.target as HTMLElement | null;
     if (!el) return;
 
@@ -466,6 +529,20 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
 
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
+
+    // On mobile viewports (<1024px), outer 20% edge zones turn pages and center 60% toggles bars
+    if (window.innerWidth < 1024) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
+      if (relX < 0.2) {
+        turnPageMobile('prev');
+        return;
+      }
+      if (relX > 0.8) {
+        turnPageMobile('next');
+        return;
+      }
+    }
 
     onCenterTap?.();
   };
@@ -522,7 +599,9 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
         /* Two-Page Book Spread Viewport */
         <div
           onClick={handleCanvasClick}
-          className={`flex-1 min-h-0 flex flex-col justify-between px-6 sm:px-14 transition-[padding] duration-180 ${spreadTopPad} ${spreadBottomPad}`}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+          className={`flex-1 min-h-0 flex flex-col justify-between px-5 sm:px-14 transition-[padding] duration-180 ${spreadTopPad} ${spreadBottomPad}`}
         >
           <div
             className="mx-auto w-full flex-1 min-h-0 flex flex-col relative"
@@ -549,6 +628,7 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
               <div
                 ref={proseRef}
                 onMouseUp={handleMouseUp}
+                onTouchEnd={handleMouseUp}
                 className={`folio-prose folio-spread-content ${fontClass} transition-transform duration-200 ease-out`}
                 style={{
                   ...proseCustomStyles,
@@ -593,10 +673,12 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
           ref={scrollContainerRef}
           onScroll={handleScroll}
           onClick={handleCanvasClick}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
           className="flex-1 overflow-y-auto bg-[var(--bg-canvas)] relative"
         >
           <div
-            className={`mx-auto px-6 sm:px-10 ${scrollTopPad} ${scrollBottomPad}`}
+            className={`mx-auto px-5 sm:px-10 ${scrollTopPad} ${scrollBottomPad}`}
             style={{maxWidth: `${prefs.pageWidth + 80}px`}}
           >
             {/* Quiet Chapter Header */}
@@ -611,6 +693,7 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
             <div
               ref={proseRef}
               onMouseUp={handleMouseUp}
+              onTouchEnd={handleMouseUp}
               className={`folio-prose ${fontClass}`}
               style={proseCustomStyles}
             />

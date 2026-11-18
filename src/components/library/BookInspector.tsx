@@ -460,7 +460,7 @@ export const BookInspector: React.FC<BookInspectorProps> = ({
 
   return (
     <>
-      {/* Desktop Docked Split Inspector (xl+) */}
+      {/* Desktop Docked Split Inspector (xl+) — unchanged */}
       <aside
         aria-label="Book inspector panel"
         className="hidden xl:flex flex-col w-[340px] shrink-0 h-full border-l border-[var(--border-subtle)] bg-[var(--bg-sidebar)]"
@@ -468,9 +468,9 @@ export const BookInspector: React.FC<BookInspectorProps> = ({
         {panelBody}
       </aside>
 
-      {/* Tablet / Narrow Viewport Slide-Over Inspector (<xl) */}
+      {/* Tablet Slide-Over Inspector (md to xl) */}
       <div
-        className="fixed inset-0 z-40 xl:hidden flex justify-end bg-black/40"
+        className="hidden md:flex xl:hidden fixed inset-0 z-40 justify-end bg-black/40"
         onClick={onClose}
       >
         <aside
@@ -481,6 +481,25 @@ export const BookInspector: React.FC<BookInspectorProps> = ({
           className="w-full max-w-sm h-full bg-[var(--bg-elevated)] border-l border-[var(--border-subtle)] shadow-2xl"
         >
           {panelBody}
+        </aside>
+      </div>
+
+      {/* Mobile Slide-Up Bottom Sheet Inspector (<md) */}
+      <div
+        className="md:hidden fixed inset-0 z-50 flex items-end bg-black/50 backdrop-blur-[2px]"
+        onClick={onClose}
+      >
+        <aside
+          role="dialog"
+          aria-modal="true"
+          aria-label="Book details"
+          onClick={(e) => e.stopPropagation()}
+          className="w-full max-h-[88dvh] rounded-t-2xl border-t border-x border-[var(--border-subtle)] bg-[var(--bg-elevated)] shadow-2xl flex flex-col overflow-hidden pb-safe animate-folio-sheet-up"
+        >
+          <div className="pt-2.5 pb-1 flex justify-center shrink-0">
+            <div className="w-10 h-1 rounded-full bg-[var(--border-strong)]" />
+          </div>
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">{panelBody}</div>
         </aside>
       </div>
     </>
