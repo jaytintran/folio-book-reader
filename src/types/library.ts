@@ -16,6 +16,8 @@ export type GroupByField = 'none' | 'author' | 'series' | 'status' | 'format';
 
 export type SidebarSectionKey = 'library' | 'folders' | 'categories' | 'tags';
 
+export type ViewFolderDisplayMode = 'card' | 'carousel';
+
 export interface CardDetailOptions {
   author: boolean;
   format: boolean;
@@ -30,6 +32,9 @@ export interface LibraryPreferences {
   cardDetails: CardDetailOptions;
   inspectorOpen: boolean;
   collapsedSidebarSections: Record<SidebarSectionKey, boolean>;
+  sidebarWidth: number;
+  viewFolderDisplayByView: Record<string, ViewFolderDisplayMode>;
+  hideFiledBooksByView: Record<string, boolean>;
 }
 
 export type LibraryViewMode = 'grid' | 'table';
@@ -99,6 +104,14 @@ export interface FolderRecord {
   name: string;
   parentId: string | null;
   color?: FolderColor;
+  createdAt: number;
+}
+
+export interface ViewFolderRecord {
+  id: string;
+  viewKey: string;
+  name: string;
+  bookIds: string[];
   createdAt: number;
 }
 

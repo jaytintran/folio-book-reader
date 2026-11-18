@@ -1,4 +1,4 @@
-import {Check, Info, Pencil, Star} from 'lucide-react';
+import {Check, Info, Pencil, Star, X} from 'lucide-react';
 import React from 'react';
 import type {
   BookRecord,
@@ -22,6 +22,7 @@ interface BookGridProps {
   onEditBook: (book: BookRecord) => void;
   onToggleFavorite: (book: BookRecord) => void;
   onToggleSelect: (bookId: string, shiftKey: boolean) => void;
+  onRemoveFromFolder?: (book: BookRecord) => void;
 }
 
 const GRID_COLUMNS_BY_SIZE: Record<CoverSize, string> = {
@@ -47,6 +48,7 @@ export const BookGrid: React.FC<BookGridProps> = ({
   onEditBook,
   onToggleFavorite,
   onToggleSelect,
+  onRemoveFromFolder,
 }) => {
   const categoryNameById = new Map(categories.map((c) => [c.id, c.name]));
 
@@ -214,6 +216,20 @@ export const BookGrid: React.FC<BookGridProps> = ({
                 >
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
+                {onRemoveFromFolder && (
+                  <button
+                    type="button"
+                    title="Remove from folder"
+                    aria-label={`Remove ${book.title} from folder`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveFromFolder(book);
+                    }}
+                    className="w-7 h-7 rounded flex items-center justify-center bg-[var(--bg-elevated)]/95 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             </div>
 

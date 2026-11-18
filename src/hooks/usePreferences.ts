@@ -5,10 +5,15 @@ import type {
   ReaderPreferences,
   SidebarSectionKey,
   ThemeMode,
+  ViewFolderDisplayMode,
 } from '../types/library';
 
 const PREFS_STORAGE_KEY = 'folio_reader_preferences_v1';
 const LIBRARY_PREFS_STORAGE_KEY = 'folio_library_preferences_v1';
+
+export const DEFAULT_SIDEBAR_WIDTH = 244;
+export const MIN_SIDEBAR_WIDTH = 200;
+export const MAX_SIDEBAR_WIDTH = 380;
 
 export const DEFAULT_PREFERENCES: ReaderPreferences = {
   theme: 'sepia',
@@ -47,7 +52,15 @@ export const DEFAULT_LIBRARY_PREFERENCES: LibraryPreferences = {
     categories: false,
     tags: false,
   },
+  sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+  viewFolderDisplayByView: {},
+  hideFiledBooksByView: {},
 };
+
+function clampSidebarWidth(w: unknown): number {
+  if (typeof w !== 'number' || !Number.isFinite(w)) return DEFAULT_SIDEBAR_WIDTH;
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(w)));
+}
 
 function loadPreferences(): ReaderPreferences {
   try {
@@ -72,6 +85,7 @@ function loadLibraryPreferences(): LibraryPreferences {
     return {
       ...DEFAULT_LIBRARY_PREFERENCES,
       ...parsed,
+      sidebarWidth: clampSidebarWidth(parsed.sidebarWidth),
       cardDetails: {
         ...DEFAULT_LIBRARY_PREFERENCES.cardDetails,
         ...(parsed.cardDetails ?? {}),
@@ -79,6 +93,12 @@ function loadLibraryPreferences(): LibraryPreferences {
       collapsedSidebarSections: {
         ...DEFAULT_LIBRARY_PREFERENCES.collapsedSidebarSections,
         ...(parsed.collapsedSidebarSections ?? {}),
+      },
+      viewFolderDisplayByView: {
+        ...(parsed.viewFolderDisplayByView ?? {}),
+      },
+      hideFiledBooksByView: {
+        ...(parsed.hideFiledBooksByView ?? {}),
       },
     };
   } catch {
@@ -125,7 +145,13 @@ export function usePreferences() {
   }, []);
 
   const updateLibraryPrefs = useCallback((patch: Partial<LibraryPreferences>) => {
-    setLibraryPrefs((prev) => ({...prev, ...patch}));
+    setLibraryPrefs((prev) => ({
+      ...prev,
+      ...patch,
+      ...(patch.sidebarWidth !== undefined
+        ? {sidebarWidth: clampSidebarWidth(patch.sidebarWidth)}
+        : {}),
+    }));
   }, []);
 
   const updateCardDetails = useCallback((patch: Partial<CardDetailOptions>) => {
@@ -144,6 +170,63 @@ export function usePreferences() {
       },
     }));
   }, []);
+
+  const setViewFolderDisplay = useCallback((viewKey: string, mode: ViewFolderDisplayMode) => {
+    setLibraryPrefs((prev) => ({
+      ...prev,
+      viewFolderDisplayByView: {
+        ...prev.viewFolderDisplayByView,
+        [viewKey]: mode,
+      },
+    }));
+  }, []);
+
+  const setHideFiledBooks = useCallback((viewKey: string, hide: boolean) => {
+    setLibraryPrefs((prev) => ({
+      ...prev,
+      hideFiledBooksByView: {
+        ...prev.hideFiledBooksByView,
+        [viewKey]: hide,
+      },
+    }));
+  }, []);
+
+  const restorePreferencesFromBackup = useCallback(
+    (
+      nextReader?: Partial<ReaderPreferences> | null,
+      nextLibrary?: Partial<LibraryPreferences> | null
+    ) => {
+      if (nextReader) {
+        setPrefs({
+          ...DEFAULT_PREFERENCES,
+          ...nextReader,
+          theme: nextReader.theme === 'dark' ? 'dark' : 'sepia',
+        });
+      }
+      if (nextLibrary) {
+        setLibraryPrefs({
+          ...DEFAULT_LIBRARY_PREFERENCES,
+          ...nextLibrary,
+          sidebarWidth: clampSidebarWidth(nextLibrary.sidebarWidth),
+          cardDetails: {
+            ...DEFAULT_LIBRARY_PREFERENCES.cardDetails,
+            ...(nextLibrary.cardDetails ?? {}),
+          },
+          collapsedSidebarSections: {
+            ...DEFAULT_LIBRARY_PREFERENCES.collapsedSidebarSections,
+            ...(nextLibrary.collapsedSidebarSections ?? {}),
+          },
+          viewFolderDisplayByView: {
+            ...(nextLibrary.viewFolderDisplayByView ?? {}),
+          },
+          hideFiledBooksByView: {
+            ...(nextLibrary.hideFiledBooksByView ?? {}),
+          },
+        });
+      }
+    },
+    []
+  );
 
   const toggleTheme = useCallback(() => {
     setPrefs((prev) => ({
@@ -173,6 +256,9 @@ export function usePreferences() {
     updateLibraryPrefs,
     updateCardDetails,
     toggleSidebarSection,
+    setViewFolderDisplay,
+    setHideFiledBooks,
+    restorePreferencesFromBackup,
     toggleTheme,
     setTheme,
     resetTypography,

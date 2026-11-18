@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  Download,
   Folder,
   FolderPlus,
   Highlighter,
@@ -14,9 +15,15 @@ import {
   Star,
   Tag,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
-import React, {useMemo, useState} from 'react';
+import React, {useMemo, useRef, useState} from 'react';
+import {
+  DEFAULT_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+} from '../../hooks/usePreferences';
 import {
   FOLDER_COLORS,
   formatFileSize,
@@ -47,6 +54,10 @@ interface LibrarySidebarProps {
   activeFilter: ActiveLibraryFilter;
   selectedTags: string[];
   collapsedSections: Record<SidebarSectionKey, boolean>;
+  sidebarWidth: number;
+  isExportingBackup: boolean;
+  isParsingBackup: boolean;
+  onSidebarWidthChange: (width: number) => void;
   onToggleSection: (section: SidebarSectionKey) => void;
   onSelectFilter: (filter: ActiveLibraryFilter) => void;
   onToggleTag: (tag: string) => void;
@@ -60,6 +71,8 @@ interface LibrarySidebarProps {
   onDropBooksToCategory: (bookIds: string[], categoryId: string) => void;
   onDropBooksToTag: (bookIds: string[], tagName: string) => void;
   onDropBooksToFavorites: (bookIds: string[]) => void;
+  onExportBackup: () => void;
+  onSelectImportBackupFile: (file: File) => void;
   isOpenMobile: boolean;
   onCloseMobile: () => void;
 }
@@ -97,6 +110,10 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
   activeFilter,
   selectedTags,
   collapsedSections,
+  sidebarWidth,
+  isExportingBackup,
+  isParsingBackup,
+  onSidebarWidthChange,
   onToggleSection,
   onSelectFilter,
   onToggleTag,
@@ -110,6 +127,8 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
   onDropBooksToCategory,
   onDropBooksToTag,
   onDropBooksToFavorites,
+  onExportBackup,
+  onSelectImportBackupFile,
   isOpenMobile,
   onCloseMobile,
 }) => {
@@ -135,6 +154,10 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
   // Drag-over highlight target
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
+  // Resizing state
+  const [isResizing, setIsResizing] = useState(false);
+  const backupInputRef = useRef<HTMLInputElement>(null);
+
   const totalBytes = books.reduce((sum, b) => sum + (b.fileSize || 0), 0);
 
   const smartCounts: Record<SmartView, number> = {
@@ -152,20 +175,20 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
     icon: React.ReactNode;
     acceptsDrop?: boolean;
   }> = [
-    {id: 'all', label: 'All Books', icon: <Library className="w-4 h-4 shrink-0" />},
-    {id: 'reading', label: 'Currently Reading', icon: <BookOpen className="w-4 h-4 shrink-0" />},
-    {id: 'unread', label: 'Unread', icon: <Circle className="w-3.5 h-3.5 shrink-0" />},
-    {id: 'finished', label: 'Finished', icon: <CheckCircle2 className="w-4 h-4 shrink-0" />},
+    {id: 'all', label: 'All Books', icon: <Library className="w-3.5 h-3.5 shrink-0" />},
+    {id: 'reading', label: 'Currently Reading', icon: <BookOpen className="w-3.5 h-3.5 shrink-0" />},
+    {id: 'unread', label: 'Unread', icon: <Circle className="w-3 h-3 shrink-0" />},
+    {id: 'finished', label: 'Finished', icon: <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />},
     {
       id: 'favorites',
       label: 'Favorites',
-      icon: <Star className="w-4 h-4 shrink-0" />,
+      icon: <Star className="w-3.5 h-3.5 shrink-0" />,
       acceptsDrop: true,
     },
     {
       id: 'highlights',
       label: 'Highlights & Notes',
-      icon: <Highlighter className="w-4 h-4 shrink-0" />,
+      icon: <Highlighter className="w-3.5 h-3.5 shrink-0" />,
     },
   ];
 
@@ -196,6 +219,34 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
     }
     return counts;
   }, [folders, books]);
+
+  const handleStartResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    setIsResizing(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = Math.min(
+        MAX_SIDEBAR_WIDTH,
+        Math.max(MIN_SIDEBAR_WIDTH, startWidth + (moveEvent.clientX - startX))
+      );
+      onSidebarWidthChange(nextWidth);
+    };
+
+    const onPointerUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  };
 
   const handleFolderSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -253,7 +304,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
     selected: FolderColor,
     onSelect: (c: FolderColor) => void
   ) => (
-    <div className="flex items-center gap-1.5 pt-1.5">
+    <div className="flex items-center gap-1.5 pt-1">
       {FOLDER_COLORS.map((col) => (
         <button
           key={col.id}
@@ -261,7 +312,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
           title={col.label}
           aria-label={`Folder color ${col.label}`}
           onClick={() => onSelect(col.id)}
-          className={`w-4 h-4 rounded-full border transition-transform cursor-pointer ${
+          className={`w-3.5 h-3.5 rounded-full border transition-transform cursor-pointer ${
             selected === col.id
               ? 'ring-2 ring-[var(--accent)] ring-offset-1 ring-offset-[var(--bg-sidebar)] scale-105'
               : 'border-black/15 opacity-80 hover:opacity-100'
@@ -275,8 +326,8 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
   const renderFolderForm = (parentId: string | null, depth: number) => (
     <form
       onSubmit={handleFolderSubmit}
-      className="my-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2 space-y-1.5"
-      style={{marginLeft: `${depth * 14}px`}}
+      className="my-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2 space-y-1.5"
+      style={{marginLeft: `${depth * 12}px`}}
     >
       <div className="flex items-center gap-1.5">
         <input
@@ -295,7 +346,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
         />
         <button
           type="submit"
-          className="px-2 py-1 text-xs font-medium rounded bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] cursor-pointer shrink-0"
+          className="px-2 py-1 text-[11px] font-medium rounded bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] cursor-pointer shrink-0"
         >
           Add
         </button>
@@ -323,7 +374,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
             <form
               onSubmit={handleFolderEditSubmit}
               className="my-1 rounded-md border border-[var(--accent)] bg-[var(--bg-surface)] p-2 space-y-1.5"
-              style={{marginLeft: `${depth * 14}px`}}
+              style={{marginLeft: `${depth * 12}px`}}
             >
               <div className="flex items-center gap-1">
                 <input
@@ -364,8 +415,8 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                 }
                 setDragOverKey(null);
               }}
-              style={{paddingLeft: `${8 + Math.min(depth, 3) * 14}px`}}
-              className={`group flex items-center justify-between gap-1 pr-2 py-1.5 rounded-md text-sm transition-colors ${
+              style={{paddingLeft: `${6 + Math.min(depth, 3) * 12}px`}}
+              className={`group flex items-center justify-between gap-1 pr-2 py-1.5 rounded-md text-xs transition-colors ${
                 isDragOver
                   ? 'ring-1 ring-[var(--accent)] bg-[var(--bg-accent-subtle)]'
                   : active
@@ -391,7 +442,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                     )}
                   </button>
                 ) : (
-                  <span className="w-4 shrink-0" />
+                  <span className="w-3.5 shrink-0" />
                 )}
 
                 <button
@@ -400,7 +451,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                   className="flex-1 min-w-0 flex items-center gap-2 text-left cursor-pointer"
                 >
                   <Folder
-                    className="w-4 h-4 shrink-0"
+                    className="w-3.5 h-3.5 shrink-0"
                     style={
                       accentHex
                         ? {color: accentHex, fill: `${accentHex}24`}
@@ -423,7 +474,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                     }}
                     title={`Add sub-folder inside ${folder.name}`}
                     aria-label={`Add sub-folder inside ${folder.name}`}
-                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-opacity"
+                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-opacity"
                   >
                     <FolderPlus className="w-3 h-3" />
                   </button>
@@ -438,7 +489,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                   }}
                   title="Edit folder name & color"
                   aria-label={`Edit ${folder.name}`}
-                  className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-opacity"
+                  className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-opacity"
                 >
                   <Pencil className="w-3 h-3" />
                 </button>
@@ -450,11 +501,11 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                   }}
                   title="Delete folder"
                   aria-label={`Delete ${folder.name}`}
-                  className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer transition-opacity"
+                  className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer transition-opacity"
                 >
                   <Trash2 className="w-3 h-3" />
                 </button>
-                <span className="font-mono-tabular text-xs text-[var(--text-muted)] w-5 text-right">
+                <span className="font-mono-tabular text-[11px] text-[var(--text-muted)] w-4 text-right">
                   {count}
                 </span>
               </div>
@@ -473,17 +524,33 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
     });
   };
 
-  const sidebarContent = (
-    <aside className="flex flex-col h-full w-[268px] shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-sidebar)] select-none">
+  const sidebarContent = (isDesktop: boolean) => (
+    <aside
+      style={isDesktop ? {width: `${sidebarWidth}px`} : {width: '264px'}}
+      className="relative flex flex-col h-full shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-sidebar)] select-none"
+    >
+      {/* Hidden Backup File Input */}
+      <input
+        ref={backupInputRef}
+        type="file"
+        accept=".zip,application/zip"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onSelectImportBackupFile(file);
+          e.target.value = '';
+        }}
+        className="hidden"
+      />
+
       {/* Brand Header */}
-      <div className="h-14 px-5 flex items-center justify-between border-b border-[var(--border-subtle)] shrink-0">
+      <div className="h-14 px-4 flex items-center justify-between border-b border-[var(--border-subtle)] shrink-0">
         <button
           type="button"
           onClick={() => selectAndClose({kind: 'smart', id: 'all'})}
-          className="flex items-center gap-2.5 text-left cursor-pointer whitespace-nowrap shrink-0"
+          className="flex items-center gap-2 text-left cursor-pointer whitespace-nowrap shrink-0"
         >
-          <BookMarked className="w-5 h-5 text-[var(--accent)] shrink-0" />
-          <span className="font-serif-editorial text-xl font-semibold tracking-tight text-[var(--text-primary)]">
+          <BookMarked className="w-4 h-4 text-[var(--accent)] shrink-0" />
+          <span className="font-serif-editorial text-lg font-semibold tracking-tight text-[var(--text-primary)]">
             Folio
           </span>
         </button>
@@ -498,20 +565,20 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
         </button>
       </div>
 
-      {/* Scrollable Navigation Sections */}
-      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+      {/* Scrollable Navigation Sections (Compact 12px Scale) */}
+      <div className="flex-1 overflow-y-auto px-2.5 py-3.5 space-y-4">
         {/* Smart Library Views */}
         <div>
           <button
             type="button"
             onClick={() => onToggleSection('library')}
-            className="w-full px-2.5 mb-1.5 flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+            className="w-full px-2 mb-1 flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
           >
             <span>Library</span>
             {collapsedSections.library ? (
-              <ChevronRight className="w-3.5 h-3.5" />
+              <ChevronRight className="w-3 h-3" />
             ) : (
-              <ChevronDown className="w-3.5 h-3.5" />
+              <ChevronDown className="w-3 h-3" />
             )}
           </button>
 
@@ -545,7 +612,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                       }
                       setDragOverKey(null);
                     }}
-                    className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-md text-sm transition-colors cursor-pointer ${
+                    className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${
                       isDragOver
                         ? 'ring-1 ring-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)]'
                         : active
@@ -553,7 +620,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                           : 'text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
                     }`}
                   >
-                    <span className="flex items-center gap-2.5 truncate">
+                    <span className="flex items-center gap-2 truncate">
                       <span
                         className={
                           active || isDragOver
@@ -565,7 +632,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                       </span>
                       <span className="truncate">{item.label}</span>
                     </span>
-                    <span className="font-mono-tabular text-xs text-[var(--text-muted)] shrink-0">
+                    <span className="font-mono-tabular text-[11px] text-[var(--text-muted)] shrink-0">
                       {smartCounts[item.id]}
                     </span>
                   </button>
@@ -577,16 +644,16 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
 
         {/* Nested Colored Folders Section */}
         <div>
-          <div className="px-2.5 mb-1.5 flex items-center justify-between">
+          <div className="px-2 mb-1 flex items-center justify-between">
             <button
               type="button"
               onClick={() => onToggleSection('folders')}
               className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
             >
               {collapsedSections.folders ? (
-                <ChevronRight className="w-3.5 h-3.5" />
+                <ChevronRight className="w-3 h-3" />
               ) : (
-                <ChevronDown className="w-3.5 h-3.5" />
+                <ChevronDown className="w-3 h-3" />
               )}
               <span>Folders</span>
             </button>
@@ -600,7 +667,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
               }}
               title="New folder"
               aria-label="Create new folder"
-              className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
+              className="p-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
             >
               <FolderPlus className="w-3.5 h-3.5" />
             </button>
@@ -611,8 +678,8 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
               {addingFolderParentId === null && renderFolderForm(null, 0)}
 
               {folders.length === 0 && addingFolderParentId === undefined ? (
-                <p className="px-2.5 py-1 text-xs text-[var(--text-muted)]">
-                  No folders yet — drag books here to file
+                <p className="px-2 py-1 text-[11px] text-[var(--text-muted)]">
+                  No folders yet
                 </p>
               ) : (
                 <div className="space-y-0.5">{renderFolderTree(null, 0)}</div>
@@ -623,16 +690,16 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
 
         {/* Categories Section (Drag-and-Drop Enabled) */}
         <div>
-          <div className="px-2.5 mb-1.5 flex items-center justify-between">
+          <div className="px-2 mb-1 flex items-center justify-between">
             <button
               type="button"
               onClick={() => onToggleSection('categories')}
               className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
             >
               {collapsedSections.categories ? (
-                <ChevronRight className="w-3.5 h-3.5" />
+                <ChevronRight className="w-3 h-3" />
               ) : (
-                <ChevronDown className="w-3.5 h-3.5" />
+                <ChevronDown className="w-3 h-3" />
               )}
               <span>Categories</span>
             </button>
@@ -644,7 +711,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
               }}
               title="New category"
               aria-label="Create new category"
-              className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
+              className="p-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
             </button>
@@ -653,7 +720,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
           {!collapsedSections.categories && (
             <>
               {addingCategory && (
-                <form onSubmit={handleCategorySubmit} className="px-2 mb-2">
+                <form onSubmit={handleCategorySubmit} className="px-1.5 mb-1.5">
                   <div className="flex items-center gap-1.5">
                     <input
                       type="text"
@@ -661,7 +728,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                       value={newCategoryName}
                       onChange={(e) => setNewCategoryName(e.target.value)}
                       placeholder="Category name..."
-                      className="flex-1 min-w-0 px-2.5 py-1.5 text-xs rounded border border-[var(--border-strong)] bg-[var(--bg-input)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                      className="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-[var(--border-strong)] bg-[var(--bg-input)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                       onKeyDown={(e) => {
                         if (e.key === 'Escape') {
                           setAddingCategory(false);
@@ -671,7 +738,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                     />
                     <button
                       type="submit"
-                      className="px-2 py-1.5 text-xs font-medium rounded bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] cursor-pointer shrink-0"
+                      className="px-2 py-1 text-[11px] font-medium rounded bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] cursor-pointer shrink-0"
                     >
                       Add
                     </button>
@@ -706,7 +773,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                         }
                         setDragOverKey(null);
                       }}
-                      className={`group flex items-center justify-between gap-1 px-2.5 py-1.5 rounded-md text-sm transition-colors ${
+                      className={`group flex items-center justify-between gap-1 px-2 py-1.5 rounded-md text-xs transition-colors ${
                         isDragOver
                           ? 'ring-1 ring-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)]'
                           : active
@@ -721,7 +788,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                       >
                         {cat.name}
                       </button>
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex items-center gap-0.5 shrink-0">
                         <button
                           type="button"
                           onClick={(e) => {
@@ -730,11 +797,11 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                           }}
                           title="Remove category"
                           aria-label={`Remove ${cat.name}`}
-                          className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer transition-opacity"
+                          className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer transition-opacity"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
-                        <span className="font-mono-tabular text-xs text-[var(--text-muted)] w-5 text-right">
+                        <span className="font-mono-tabular text-[11px] text-[var(--text-muted)] w-4 text-right">
                           {count}
                         </span>
                       </div>
@@ -748,16 +815,16 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
 
         {/* Tags Section (Drag-and-Drop Enabled) */}
         <div>
-          <div className="px-2.5 mb-1.5 flex items-center justify-between">
+          <div className="px-2 mb-1 flex items-center justify-between">
             <button
               type="button"
               onClick={() => onToggleSection('tags')}
               className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
             >
               {collapsedSections.tags ? (
-                <ChevronRight className="w-3.5 h-3.5" />
+                <ChevronRight className="w-3 h-3" />
               ) : (
-                <ChevronDown className="w-3.5 h-3.5" />
+                <ChevronDown className="w-3 h-3" />
               )}
               <span>Tags</span>
             </button>
@@ -774,7 +841,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
 
           {!collapsedSections.tags &&
             (allTags.length === 0 ? (
-              <p className="px-2.5 py-1 text-xs text-[var(--text-muted)]">
+              <p className="px-2 py-1 text-[11px] text-[var(--text-muted)]">
                 Add tags via Edit Metadata
               </p>
             ) : (
@@ -806,7 +873,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                         }
                         setDragOverKey(null);
                       }}
-                      className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${
+                      className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${
                         isDragOver
                           ? 'ring-1 ring-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)]'
                           : isSelected
@@ -829,23 +896,66 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
         </div>
       </div>
 
-      {/* Offline Storage Summary & PWA Install Action */}
-      <div className="p-3.5 border-t border-[var(--border-subtle)] space-y-2.5 shrink-0">
-        <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
-          <span>Local archive</span>
-          <span className="font-mono-tabular text-[var(--text-primary)]">
-            {books.length} {books.length === 1 ? 'book' : 'books'} · {formatFileSize(totalBytes)}
+      {/* Offline Storage Summary, Full ZIP Backup Actions & PWA Install */}
+      <div className="p-3 border-t border-[var(--border-subtle)] space-y-2.5 shrink-0">
+        <div className="flex items-center justify-between gap-2 text-[11px] text-[var(--text-secondary)]">
+          <span className="truncate">Local archive</span>
+          <span className="font-mono-tabular text-[var(--text-primary)] shrink-0">
+            {books.length} · {formatFileSize(totalBytes)}
           </span>
         </div>
+
+        {/* Export Backup & Import Backup Buttons */}
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            disabled={isExportingBackup || isParsingBackup}
+            onClick={onExportBackup}
+            title="Export full library ZIP backup (books, folders, notes, settings)"
+            className="inline-flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] font-medium rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-55 transition-colors cursor-pointer whitespace-nowrap truncate"
+          >
+            <Download className="w-3 h-3 shrink-0 text-[var(--accent)]" />
+            <span className="truncate">{isExportingBackup ? 'Exporting…' : 'Export'}</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isExportingBackup || isParsingBackup}
+            onClick={() => backupInputRef.current?.click()}
+            title="Import a Folio .zip backup archive"
+            className="inline-flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] font-medium rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-55 transition-colors cursor-pointer whitespace-nowrap truncate"
+          >
+            <Upload className="w-3 h-3 shrink-0 text-[var(--text-secondary)]" />
+            <span className="truncate">{isParsingBackup ? 'Reading…' : 'Import'}</span>
+          </button>
+        </div>
+
         <PWAInstallButton />
       </div>
+
+      {/* Desktop Drag-Resize Divider */}
+      {isDesktop && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar width (double-click to reset)"
+          title="Drag to resize sidebar · Double-click to reset"
+          onPointerDown={handleStartResize}
+          onDoubleClick={() => onSidebarWidthChange(DEFAULT_SIDEBAR_WIDTH)}
+          className={`absolute top-0 right-[-3px] bottom-0 w-1.5 cursor-col-resize z-20 transition-colors ${
+            isResizing
+              ? 'bg-[var(--accent)]/60'
+              : 'bg-transparent hover:bg-[var(--accent)]/35'
+          }`}
+        />
+      )}
     </aside>
   );
 
   return (
     <>
-      {/* Desktop persistent sidebar */}
-      <div className="hidden lg:block h-full">{sidebarContent}</div>
+      {/* Desktop persistent resizable sidebar */}
+      <div className="hidden lg:block h-full shrink-0">{sidebarContent(true)}</div>
 
       {/* Mobile / narrow viewport slide-over sidebar */}
       {isOpenMobile && (
@@ -854,7 +964,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
           onClick={onCloseMobile}
         >
           <div className="h-full" onClick={(e) => e.stopPropagation()}>
-            {sidebarContent}
+            {sidebarContent(false)}
           </div>
         </div>
       )}

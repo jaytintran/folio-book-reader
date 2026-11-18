@@ -4,22 +4,28 @@
  */
 
 import {
+  ArrowLeft,
   BookUp,
+  Check,
   CheckSquare,
   ChevronDown,
   ChevronRight,
+  Folder,
   LayoutGrid,
   List,
   Menu,
   Moon,
   PanelRight,
+  Pencil,
   Plus,
   Search,
   SlidersHorizontal,
   Sun,
+  Trash2,
   X,
 } from 'lucide-react';
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {AddBooksToFolderModal} from './components/library/AddBooksToFolderModal';
 import {BookGrid} from './components/library/BookGrid';
 import {BookInspector} from './components/library/BookInspector';
 import {BookTable} from './components/library/BookTable';
@@ -36,16 +42,23 @@ import {
 } from './components/library/DuplicateImportModal';
 import {EmptyLibraryDropzone} from './components/library/EmptyLibraryDropzone';
 import {HighlightsHubView} from './components/library/HighlightsHubView';
+import {ImportBackupModal} from './components/library/ImportBackupModal';
 import {
   LibrarySidebar,
   type ActiveLibraryFilter,
 } from './components/library/LibrarySidebar';
 import {MetadataDrawer} from './components/library/MetadataDrawer';
+import {ViewFoldersSection} from './components/library/ViewFoldersSection';
 import {OfflineIndicator} from './components/pwa/OfflineIndicator';
 import {ReaderTabStrip} from './components/reader/ReaderTabStrip';
 import {ReaderView} from './components/reader/ReaderView';
 import {ToastContainer} from './components/ui/ToastContainer';
 import {usePreferences} from './hooks/usePreferences';
+import {
+  exportLibraryBackupZip,
+  parseLibraryBackupZip,
+  type ParsedBackupArchive,
+} from './lib/backup';
 import {libraryDb} from './lib/db';
 import {flattenFoldersHierarchy, getFolderDescendantIds} from './lib/formatters';
 import {importBookFile} from './lib/parsers';
@@ -63,6 +76,7 @@ import type {
   SortDirection,
   SortField,
   ToastMessage,
+  ViewFolderRecord,
 } from './types/library';
 
 function makeId(prefix: string): string {
@@ -84,6 +98,9 @@ export default function App() {
     updateLibraryPrefs,
     updateCardDetails,
     toggleSidebarSection,
+    setViewFolderDisplay,
+    setHideFiledBooks,
+    restorePreferencesFromBackup,
     toggleTheme,
     resetTypography,
   } = usePreferences();
@@ -91,6 +108,7 @@ export default function App() {
   const [isHydrating, setIsHydrating] = useState(true);
   const [books, setBooks] = useState<BookRecord[]>([]);
   const [folders, setFolders] = useState<FolderRecord[]>([]);
+  const [viewFolders, setViewFolders] = useState<ViewFolderRecord[]>([]);
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
   const [allHighlights, setAllHighlights] = useState<HighlightRecord[]>([]);
   const [allBookmarks, setAllBookmarks] = useState<BookmarkRecord[]>([]);
@@ -138,6 +156,18 @@ export default function App() {
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
+  // Per-view folder drill-in & add-books modal state
+  const [activeViewFolderId, setActiveViewFolderId] = useState<string | null>(null);
+  const [addBooksFolderId, setAddBooksFolderId] = useState<string | null>(null);
+  const [isRenamingDrilledFolder, setIsRenamingDrilledFolder] = useState(false);
+  const [drilledRenameDraft, setDrilledRenameDraft] = useState('');
+
+  // Backup export / import state
+  const [isExportingBackup, setIsExportingBackup] = useState(false);
+  const [isParsingBackup, setIsParsingBackup] = useState(false);
+  const [pendingBackup, setPendingBackup] = useState<ParsedBackupArchive | null>(null);
+  const [isRestoringBackup, setIsRestoringBackup] = useState(false);
+
   // Import state, duplicate resolution queue & global drop overlay
   const [isImporting, setIsImporting] = useState(false);
   const [pendingDuplicates, setPendingDuplicates] = useState<PendingDuplicateItem[]>([]);
@@ -176,32 +206,44 @@ export default function App() {
     }
   }, []);
 
+  const reloadLibraryData = useCallback(async () => {
+    const [
+      loadedBooks,
+      loadedFolders,
+      loadedViewFolders,
+      loadedCategories,
+      loadedHighlights,
+      loadedBookmarks,
+    ] = await Promise.all([
+      libraryDb.getAllBooks(),
+      libraryDb.getAllFolders(),
+      libraryDb.getAllViewFolders(),
+      libraryDb.getAllCategories(),
+      libraryDb.getAllHighlights(),
+      libraryDb.getAllBookmarks(),
+    ]);
+    setBooks(loadedBooks);
+    setFolders(loadedFolders);
+    setViewFolders(loadedViewFolders);
+    setCategories(loadedCategories);
+    setAllHighlights(loadedHighlights);
+    setAllBookmarks(loadedBookmarks);
+    const validIds = new Set(loadedBooks.map((b) => b.id));
+    setOpenBookIds((prev) => prev.filter((id) => validIds.has(id)));
+    return {
+      books: loadedBooks,
+      folders: loadedFolders,
+      viewFolders: loadedViewFolders,
+      categories: loadedCategories,
+    };
+  }, []);
+
   // Hydrate offline library from IndexedDB on mount
   useEffect(() => {
     let active = true;
     const hydrate = async () => {
       try {
-        const [
-          loadedBooks,
-          loadedFolders,
-          loadedCategories,
-          loadedHighlights,
-          loadedBookmarks,
-        ] = await Promise.all([
-          libraryDb.getAllBooks(),
-          libraryDb.getAllFolders(),
-          libraryDb.getAllCategories(),
-          libraryDb.getAllHighlights(),
-          libraryDb.getAllBookmarks(),
-        ]);
-        if (!active) return;
-        setBooks(loadedBooks);
-        setFolders(loadedFolders);
-        setCategories(loadedCategories);
-        setAllHighlights(loadedHighlights);
-        setAllBookmarks(loadedBookmarks);
-        const validIds = new Set(loadedBooks.map((b) => b.id));
-        setOpenBookIds((prev) => prev.filter((id) => validIds.has(id)));
+        await reloadLibraryData();
       } catch {
         if (active) {
           notify('Could not open local IndexedDB storage', 'error');
@@ -214,7 +256,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [notify]);
+  }, [reloadLibraryData, notify]);
 
   // Global Cmd/Ctrl+K Command Palette shortcut (in Library view)
   useEffect(() => {
@@ -316,11 +358,81 @@ export default function App() {
     });
   }, [books, folders, activeFilter, formatFilter, selectedTags, searchQuery, sortField, sortDirection]);
 
+  // Active view key for per-view folders (distinct per smart view, folder, category, or tag view)
+  const activeViewKey = useMemo(() => {
+    if (selectedTags.length > 0) {
+      const normalized = [...selectedTags]
+        .map((t) => t.toLowerCase())
+        .sort()
+        .join('|');
+      return `tag:${normalized}`;
+    }
+    return `${activeFilter.kind}:${activeFilter.id}`;
+  }, [activeFilter, selectedTags]);
+
+  // Reset drilled-in view folder when switching views
+  useEffect(() => {
+    setActiveViewFolderId(null);
+    setIsRenamingDrilledFolder(false);
+  }, [activeViewKey]);
+
+  const currentViewFolders = useMemo(
+    () =>
+      viewFolders
+        .filter((f) => f.viewKey === activeViewKey)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [viewFolders, activeViewKey]
+  );
+
+  const activeDrilledFolder = useMemo(
+    () =>
+      activeViewFolderId
+        ? currentViewFolders.find((f) => f.id === activeViewFolderId) ?? null
+        : null,
+    [currentViewFolders, activeViewFolderId]
+  );
+
+  const addBooksTargetFolder = useMemo(
+    () =>
+      addBooksFolderId
+        ? viewFolders.find((f) => f.id === addBooksFolderId) ?? null
+        : null,
+    [viewFolders, addBooksFolderId]
+  );
+
+  const filedBookIdsInView = useMemo(() => {
+    const visibleIdSet = new Set(visibleBooks.map((b) => b.id));
+    const filed = new Set<string>();
+    for (const folder of currentViewFolders) {
+      for (const bid of folder.bookIds) {
+        if (visibleIdSet.has(bid)) {
+          filed.add(bid);
+        }
+      }
+    }
+    return filed;
+  }, [currentViewFolders, visibleBooks]);
+
+  const viewFolderDisplayMode = libraryPrefs.viewFolderDisplayByView[activeViewKey] ?? 'card';
+  const hideFiledBooksInView = libraryPrefs.hideFiledBooksByView[activeViewKey] ?? true;
+
+  // Books displayed in the main grid/table (either drilled-in folder contents or ungrouped view books)
+  const displayedBooks = useMemo(() => {
+    if (activeDrilledFolder) {
+      const idSet = new Set(activeDrilledFolder.bookIds);
+      return visibleBooks.filter((b) => idSet.has(b.id));
+    }
+    if (hideFiledBooksInView && filedBookIdsInView.size > 0) {
+      return visibleBooks.filter((b) => !filedBookIdsInView.has(b.id));
+    }
+    return visibleBooks;
+  }, [activeDrilledFolder, visibleBooks, hideFiledBooksInView, filedBookIdsInView]);
+
   // Catalog Grouping Pipeline
   const groupedBooks = useMemo<Array<{key: string; label: string; books: BookRecord[]}>>(() => {
     const groupBy = libraryPrefs.groupBy;
     if (groupBy === 'none') {
-      return [{key: '__all__', label: '', books: visibleBooks}];
+      return [{key: '__all__', label: '', books: displayedBooks}];
     }
 
     const map = new Map<string, {label: string; books: BookRecord[]; order?: number}>();
@@ -330,7 +442,7 @@ export default function App() {
       finished: {label: 'Finished', order: 2},
     };
 
-    for (const book of visibleBooks) {
+    for (const book of displayedBooks) {
       let key = '';
       let label = '';
       let order: number | undefined;
@@ -368,7 +480,7 @@ export default function App() {
         }
         return a.label.localeCompare(b.label);
       });
-  }, [visibleBooks, libraryPrefs.groupBy]);
+  }, [displayedBooks, libraryPrefs.groupBy]);
 
   // Active breadcrumb header label
   const activeViewHeading = useMemo(() => {
@@ -391,6 +503,15 @@ export default function App() {
     const c = categories.find((item) => item.id === activeFilter.id);
     return {section: 'Categories', title: c?.name ?? 'Category'};
   }, [activeFilter, folders, categories]);
+
+  const activeViewLabel = useMemo(() => {
+    if (selectedTags.length > 0) {
+      return selectedTags.length === 1
+        ? `#${selectedTags[0]}`
+        : `Tags (${selectedTags.join(', ')})`;
+    }
+    return activeViewHeading.title;
+  }, [selectedTags, activeViewHeading.title]);
 
   // File Import Pipeline with Duplicate Detection
   const handleImportFiles = useCallback(
@@ -840,6 +961,189 @@ export default function App() {
     [books, notify]
   );
 
+  // Per-View Folders CRUD & Book Assignment
+  const handleCreateViewFolder = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const folder: ViewFolderRecord = {
+        id: makeId('vfolder'),
+        viewKey: activeViewKey,
+        name: trimmed,
+        bookIds: [],
+        createdAt: Date.now(),
+      };
+      await libraryDb.saveViewFolder(folder);
+      setViewFolders((prev) => [...prev, folder]);
+      notify(`Created folder "${trimmed}" in ${activeViewLabel}`, 'success');
+    },
+    [activeViewKey, activeViewLabel, notify]
+  );
+
+  const handleRenameViewFolder = useCallback(
+    async (folderId: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const target = viewFolders.find((f) => f.id === folderId);
+      if (!target || target.name === trimmed) return;
+      const updated: ViewFolderRecord = {...target, name: trimmed};
+      await libraryDb.saveViewFolder(updated);
+      setViewFolders((prev) => prev.map((f) => (f.id === folderId ? updated : f)));
+      notify(`Renamed folder to "${trimmed}"`, 'success');
+    },
+    [viewFolders, notify]
+  );
+
+  const handleDeleteViewFolder = useCallback(
+    async (folderId: string) => {
+      const target = viewFolders.find((f) => f.id === folderId);
+      await libraryDb.deleteViewFolder(folderId);
+      setViewFolders((prev) => prev.filter((f) => f.id !== folderId));
+      setActiveViewFolderId((curr) => (curr === folderId ? null : curr));
+      setAddBooksFolderId((curr) => (curr === folderId ? null : curr));
+      notify(
+        target ? `Deleted folder "${target.name}" (books kept)` : 'Folder deleted',
+        'info'
+      );
+    },
+    [viewFolders, notify]
+  );
+
+  const handleSaveViewFolderBooks = useCallback(
+    async (folderId: string, nextBookIds: string[]) => {
+      const target = viewFolders.find((f) => f.id === folderId);
+      if (!target) return;
+      const deduped = Array.from(new Set(nextBookIds));
+      const updated: ViewFolderRecord = {...target, bookIds: deduped};
+      await libraryDb.saveViewFolder(updated);
+      setViewFolders((prev) => prev.map((f) => (f.id === folderId ? updated : f)));
+      setAddBooksFolderId(null);
+      notify(`Updated "${target.name}" (${deduped.length} books)`, 'success');
+    },
+    [viewFolders, notify]
+  );
+
+  const handleDropBooksToViewFolder = useCallback(
+    async (bookIds: string[], folderId: string) => {
+      const target = viewFolders.find((f) => f.id === folderId);
+      if (!target) return;
+      const existingSet = new Set(target.bookIds);
+      const toAdd = bookIds.filter((id) => !existingSet.has(id));
+      if (toAdd.length === 0) return;
+
+      const updated: ViewFolderRecord = {
+        ...target,
+        bookIds: [...target.bookIds, ...toAdd],
+      };
+      await libraryDb.saveViewFolder(updated);
+      setViewFolders((prev) => prev.map((f) => (f.id === folderId ? updated : f)));
+      notify(
+        toAdd.length === 1
+          ? `Added book to "${target.name}"`
+          : `Added ${toAdd.length} books to "${target.name}"`,
+        'success'
+      );
+    },
+    [viewFolders, notify]
+  );
+
+  const handleRemoveBookFromViewFolder = useCallback(
+    async (bookId: string, folderId: string) => {
+      const target = viewFolders.find((f) => f.id === folderId);
+      if (!target || !target.bookIds.includes(bookId)) return;
+      const updated: ViewFolderRecord = {
+        ...target,
+        bookIds: target.bookIds.filter((id) => id !== bookId),
+      };
+      await libraryDb.saveViewFolder(updated);
+      setViewFolders((prev) => prev.map((f) => (f.id === folderId ? updated : f)));
+      notify(`Removed book from "${target.name}"`, 'info');
+    },
+    [viewFolders, notify]
+  );
+
+  // Full ZIP Backup Export & Import Handlers
+  const handleExportBackup = useCallback(async () => {
+    if (isExportingBackup) return;
+    setIsExportingBackup(true);
+    try {
+      const {blob, fileName, bookCount} = await exportLibraryBackupZip(prefs, libraryPrefs);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      notify(
+        `Exported backup (${bookCount} ${bookCount === 1 ? 'book' : 'books'})`,
+        'success',
+        fileName
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Backup export failed';
+      notify('Could not export backup', 'error', msg);
+    } finally {
+      setIsExportingBackup(false);
+    }
+  }, [isExportingBackup, prefs, libraryPrefs, notify]);
+
+  const handleSelectImportBackupFile = useCallback(
+    async (file: File) => {
+      if (isParsingBackup) return;
+      setIsParsingBackup(true);
+      try {
+        const parsed = await parseLibraryBackupZip(file);
+        setPendingBackup(parsed);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Invalid Folio backup ZIP archive';
+        notify('Could not read backup archive', 'error', msg);
+      } finally {
+        setIsParsingBackup(false);
+      }
+    },
+    [isParsingBackup, notify]
+  );
+
+  const handleConfirmImportBackup = useCallback(
+    async (mode: 'merge' | 'replace') => {
+      if (!pendingBackup || isRestoringBackup) return;
+      setIsRestoringBackup(true);
+      try {
+        const stats = await libraryDb.restoreBackup(pendingBackup.snapshot, mode);
+        if (mode === 'replace') {
+          restorePreferencesFromBackup(
+            pendingBackup.readerPreferences,
+            pendingBackup.libraryPreferences
+          );
+          setOpenBookIds([]);
+          setReadingBookId(null);
+          setActiveFilter({kind: 'smart', id: 'all'});
+          setSelectedTags([]);
+          setActiveViewFolderId(null);
+          setInspectedBookId(null);
+        }
+        await reloadLibraryData();
+        setPendingBackup(null);
+        notify(
+          mode === 'replace'
+            ? `Library replaced with ${stats.booksAdded} ${stats.booksAdded === 1 ? 'book' : 'books'}`
+            : `Merged ${stats.booksAdded} ${stats.booksAdded === 1 ? 'book' : 'books'}${
+                stats.booksSkipped > 0 ? ` (${stats.booksSkipped} already present)` : ''
+              }`,
+          'success'
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to restore backup';
+        notify('Backup import failed', 'error', msg);
+      } finally {
+        setIsRestoringBackup(false);
+      }
+    },
+    [pendingBackup, isRestoringBackup, restorePreferencesFromBackup, reloadLibraryData, notify]
+  );
+
   // Highlight hub mutations
   const handleUpdateHighlight = useCallback(
     async (updated: HighlightRecord) => {
@@ -863,6 +1167,13 @@ export default function App() {
     async (bookId: string) => {
       await libraryDb.deleteBooks([bookId]);
       setBooks((prev) => prev.filter((b) => b.id !== bookId));
+      setViewFolders((prev) =>
+        prev.map((vf) =>
+          vf.bookIds.includes(bookId)
+            ? {...vf, bookIds: vf.bookIds.filter((id) => id !== bookId)}
+            : vf
+        )
+      );
       setAllHighlights((prev) => prev.filter((h) => h.bookId !== bookId));
       setAllBookmarks((prev) => prev.filter((bm) => bm.bookId !== bookId));
       setOpenBookIds((prev) => prev.filter((id) => id !== bookId));
@@ -885,7 +1196,7 @@ export default function App() {
       setSelectedIds((prev) => {
         const next = new Set(prev);
         if (shiftKey && lastSelectedIdRef.current) {
-          const ids = visibleBooks.map((b) => b.id);
+          const ids = displayedBooks.map((b) => b.id);
           const a = ids.indexOf(lastSelectedIdRef.current);
           const b = ids.indexOf(bookId);
           if (a !== -1 && b !== -1) {
@@ -905,18 +1216,18 @@ export default function App() {
       });
       lastSelectedIdRef.current = bookId;
     },
-    [visibleBooks]
+    [displayedBooks]
   );
 
   const handleToggleSelectAllVisible = useCallback(() => {
-    const visibleIds = visibleBooks.map((b) => b.id);
+    const visibleIds = displayedBooks.map((b) => b.id);
     const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
     if (allSelected) {
       setSelectedIds(new Set());
     } else {
       setSelectedIds(new Set(visibleIds));
     }
-  }, [visibleBooks, selectedIds]);
+  }, [displayedBooks, selectedIds]);
 
   const handleClearSelection = useCallback(() => {
     setSelectedIds(new Set());
@@ -1000,6 +1311,13 @@ export default function App() {
     await libraryDb.deleteBooks(ids);
     const idSet = new Set(ids);
     setBooks((prev) => prev.filter((b) => !idSet.has(b.id)));
+    setViewFolders((prev) =>
+      prev.map((vf) =>
+        vf.bookIds.some((id) => idSet.has(id))
+          ? {...vf, bookIds: vf.bookIds.filter((id) => !idSet.has(id))}
+          : vf
+      )
+    );
     setAllHighlights((prev) => prev.filter((h) => !idSet.has(h.bookId)));
     setAllBookmarks((prev) => prev.filter((bm) => !idSet.has(bm.bookId)));
     setOpenBookIds((prev) => prev.filter((id) => !idSet.has(id)));
@@ -1119,7 +1437,7 @@ export default function App() {
   );
 
   const allVisibleSelected =
-    visibleBooks.length > 0 && visibleBooks.every((b) => selectedIds.has(b.id));
+    displayedBooks.length > 0 && displayedBooks.every((b) => selectedIds.has(b.id));
 
   const hasActiveSubFilters =
     searchQuery.trim().length > 0 ||
@@ -1129,6 +1447,7 @@ export default function App() {
     activeFilter.id !== 'all';
 
   const showContinueReadingShelf =
+    !activeDrilledFolder &&
     activeFilter.kind === 'smart' &&
     activeFilter.id === 'all' &&
     searchQuery.trim().length === 0 &&
@@ -1141,6 +1460,7 @@ export default function App() {
     setSelectedTags([]);
     setFormatFilter('all');
     setSearchQuery('');
+    setActiveViewFolderId(null);
   };
 
   const toggleGroupCollapse = (key: string) => {
@@ -1215,9 +1535,14 @@ export default function App() {
           activeFilter={activeFilter}
           selectedTags={selectedTags}
           collapsedSections={libraryPrefs.collapsedSidebarSections}
+          sidebarWidth={libraryPrefs.sidebarWidth}
+          isExportingBackup={isExportingBackup}
+          isParsingBackup={isParsingBackup}
+          onSidebarWidthChange={(sidebarWidth) => updateLibraryPrefs({sidebarWidth})}
           onToggleSection={toggleSidebarSection}
           onSelectFilter={(filter) => {
             setActiveFilter(filter);
+            setActiveViewFolderId(null);
             setSelectedIds(new Set());
           }}
           onToggleTag={(tag) => {
@@ -1244,6 +1569,8 @@ export default function App() {
           }
           onDropBooksToTag={(bookIds, tagName) => void handleDropBooksToTag(bookIds, tagName)}
           onDropBooksToFavorites={(bookIds) => void handleDropBooksToFavorites(bookIds)}
+          onExportBackup={() => void handleExportBackup()}
+          onSelectImportBackupFile={(file) => void handleSelectImportBackupFile(file)}
           isOpenMobile={mobileSidebarOpen}
           onCloseMobile={() => setMobileSidebarOpen(false)}
         />
@@ -1564,27 +1891,8 @@ export default function App() {
                 onBrowseClick={() => fileInputRef.current?.click()}
                 isImporting={isImporting}
               />
-            ) : visibleBooks.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
-                <p className="font-serif-editorial text-lg font-medium text-[var(--text-primary)]">
-                  No matching books
-                </p>
-                <p className="mt-1.5 text-xs text-[var(--text-secondary)] max-w-sm">
-                  No books in your offline library match the current folder, category, tag, or
-                  search criteria.
-                </p>
-                {hasActiveSubFilters && (
-                  <button
-                    type="button"
-                    onClick={resetAllFilters}
-                    className="mt-4 px-4 py-2 text-xs font-medium rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
-                  >
-                    Reset Filters
-                  </button>
-                )}
-              </div>
             ) : (
-              <div className="p-5 lg:p-8 pb-24">
+              <div className="p-5 lg:p-8 pb-24 flex-1 flex flex-col">
                 {/* Reading Overview Strip + Continue Reading Shelf */}
                 {showContinueReadingShelf && (
                   <ContinueReadingShelf
@@ -1598,77 +1906,299 @@ export default function App() {
                   />
                 )}
 
-                {/* Grouped or Flat Catalog */}
-                <div className="space-y-9">
-                  {groupedBooks.map((group) => {
-                    const isGrouped = libraryPrefs.groupBy !== 'none';
-                    const isCollapsed = isGrouped && collapsedGroups.has(group.key);
+                {/* Drilled-In View Folder Breadcrumb Header OR Per-View Folders Section */}
+                {activeDrilledFolder ? (
+                  <div className="mb-6 pb-4 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveViewFolderId(null);
+                          setIsRenamingDrilledFolder(false);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer shrink-0"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                        <span>Back to {activeViewLabel}</span>
+                      </button>
 
-                    return (
-                      <section key={group.key}>
-                        {isGrouped && (
-                          <div className="mb-4 pb-2 border-b border-[var(--border-subtle)] flex items-center justify-between">
-                            <button
-                              type="button"
-                              onClick={() => toggleGroupCollapse(group.key)}
-                              className="inline-flex items-center gap-2 text-left cursor-pointer group"
-                            >
-                              {isCollapsed ? (
-                                <ChevronRight className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--text-primary)]" />
-                              ) : (
-                                <ChevronDown className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--text-primary)]" />
-                              )}
-                              <h2 className="font-serif-editorial text-base font-semibold text-[var(--text-primary)]">
-                                {group.label}
-                              </h2>
-                              <span className="font-mono-tabular text-xs text-[var(--text-muted)]">
-                                {group.books.length}
-                              </span>
-                            </button>
-                          </div>
-                        )}
+                      <span className="text-xs text-[var(--text-muted)]">/</span>
 
-                        {!isCollapsed &&
-                          (viewMode === 'grid' ? (
-                            <BookGrid
-                              books={group.books}
-                              categories={categories}
-                              selectedIds={selectedIds}
-                              isSelectionMode={isSelectionMode}
-                              coverSize={libraryPrefs.coverSize}
-                              cardDetails={libraryPrefs.cardDetails}
-                              inspectorOpen={libraryPrefs.inspectorOpen}
-                              inspectedBookId={inspectedBook?.id ?? null}
-                              onOpenBook={(book) => void openBookInTab(book.id)}
-                              onInspectBook={handleInspectBook}
-                              onEditBook={(book) => setEditingBookId(book.id)}
-                              onToggleFavorite={(book) => void handleToggleFavorite(book)}
-                              onToggleSelect={handleToggleSelect}
-                            />
-                          ) : (
-                            <BookTable
-                              books={group.books}
-                              categories={categories}
-                              folders={folders}
-                              selectedIds={selectedIds}
-                              allSelected={allVisibleSelected}
-                              inspectorOpen={libraryPrefs.inspectorOpen}
-                              inspectedBookId={inspectedBook?.id ?? null}
-                              sortField={sortField}
-                              sortDirection={sortDirection}
-                              onSortChange={handleSortFieldClick}
-                              onToggleSelect={handleToggleSelect}
-                              onToggleSelectAll={handleToggleSelectAllVisible}
-                              onOpenBook={(book) => void openBookInTab(book.id)}
-                              onInspectBook={handleInspectBook}
-                              onEditBook={(book) => setEditingBookId(book.id)}
-                              onToggleFavorite={(book) => void handleToggleFavorite(book)}
-                            />
-                          ))}
-                      </section>
-                    );
-                  })}
-                </div>
+                      {isRenamingDrilledFolder ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void handleRenameViewFolder(activeDrilledFolder.id, drilledRenameDraft);
+                            setIsRenamingDrilledFolder(false);
+                          }}
+                          className="flex items-center gap-1.5"
+                        >
+                          <input
+                            type="text"
+                            autoFocus
+                            value={drilledRenameDraft}
+                            onChange={(e) => setDrilledRenameDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') setIsRenamingDrilledFolder(false);
+                            }}
+                            className="px-2.5 py-1 text-xs rounded border border-[var(--accent)] bg-[var(--bg-input)] text-[var(--text-primary)]"
+                          />
+                          <button
+                            type="submit"
+                            aria-label="Save folder title"
+                            className="p-1.5 rounded bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setIsRenamingDrilledFolder(false)}
+                            aria-label="Cancel rename"
+                            className="p-1.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </form>
+                      ) : (
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Folder className="w-4 h-4 text-[var(--accent)] shrink-0" />
+                          <h2 className="font-serif-editorial text-lg font-semibold text-[var(--text-primary)] truncate">
+                            {activeDrilledFolder.name}
+                          </h2>
+                          <span className="font-mono-tabular text-xs text-[var(--text-muted)] shrink-0">
+                            {displayedBooks.length}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setAddBooksFolderId(activeDrilledFolder.id)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Books</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDrilledRenameDraft(activeDrilledFolder.name);
+                          setIsRenamingDrilledFolder(true);
+                        }}
+                        title="Rename folder"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Rename</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteViewFolder(activeDrilledFolder.id)}
+                        title="Delete folder (books remain in library)"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--danger)] hover:border-[var(--danger)]/40 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Delete</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <ViewFoldersSection
+                    viewLabel={activeViewLabel}
+                    viewFolders={currentViewFolders}
+                    viewBooks={visibleBooks}
+                    displayMode={viewFolderDisplayMode}
+                    hideFiledBooks={hideFiledBooksInView}
+                    filedBooksCount={filedBookIdsInView.size}
+                    coverSize={libraryPrefs.coverSize}
+                    inspectorOpen={libraryPrefs.inspectorOpen}
+                    inspectedBookId={inspectedBook?.id ?? null}
+                    onDisplayModeChange={(mode) => setViewFolderDisplay(activeViewKey, mode)}
+                    onToggleHideFiled={() =>
+                      setHideFiledBooks(activeViewKey, !hideFiledBooksInView)
+                    }
+                    onCreateFolder={(name) => void handleCreateViewFolder(name)}
+                    onRenameFolder={(folderId, name) => void handleRenameViewFolder(folderId, name)}
+                    onDeleteFolder={(folderId) => void handleDeleteViewFolder(folderId)}
+                    onOpenFolder={(folderId) => {
+                      setActiveViewFolderId(folderId);
+                      setSelectedIds(new Set());
+                    }}
+                    onRequestAddBooks={(folder) => setAddBooksFolderId(folder.id)}
+                    onDropBooksToViewFolder={(bookIds, folderId) =>
+                      void handleDropBooksToViewFolder(bookIds, folderId)
+                    }
+                    onRemoveBookFromViewFolder={(bookId, folderId) =>
+                      void handleRemoveBookFromViewFolder(bookId, folderId)
+                    }
+                    onOpenBook={(book) => void openBookInTab(book.id)}
+                    onInspectBook={handleInspectBook}
+                  />
+                )}
+
+                {/* Main Catalog Area (Ungrouped Books or Drilled-In Folder Books) */}
+                {activeDrilledFolder && displayedBooks.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
+                    <Folder className="w-8 h-8 text-[var(--text-muted)] mb-3" />
+                    <p className="font-serif-editorial text-lg font-medium text-[var(--text-primary)]">
+                      {searchQuery.trim()
+                        ? 'No matching books in this folder'
+                        : `"${activeDrilledFolder.name}" is empty`}
+                    </p>
+                    <p className="mt-1.5 text-xs text-[var(--text-secondary)] max-w-sm">
+                      {searchQuery.trim()
+                        ? 'Try clearing your search or format filter to see all books in this folder.'
+                        : 'Add books from this view into this folder to organize your shelf.'}
+                    </p>
+                    <div className="mt-4 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAddBooksFolderId(activeDrilledFolder.id)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-md bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Books</span>
+                      </button>
+                      {searchQuery.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchQuery('')}
+                          className="px-4 py-2 text-xs font-medium rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                        >
+                          Clear Search
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : visibleBooks.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
+                    <p className="font-serif-editorial text-lg font-medium text-[var(--text-primary)]">
+                      No matching books
+                    </p>
+                    <p className="mt-1.5 text-xs text-[var(--text-secondary)] max-w-sm">
+                      No books in your offline library match the current folder, category, tag, or
+                      search criteria.
+                    </p>
+                    {hasActiveSubFilters && (
+                      <button
+                        type="button"
+                        onClick={resetAllFilters}
+                        className="mt-4 px-4 py-2 text-xs font-medium rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                      >
+                        Reset Filters
+                      </button>
+                    )}
+                  </div>
+                ) : displayedBooks.length === 0 && hideFiledBooksInView && filedBookIdsInView.size > 0 ? (
+                  <div className="py-10 px-6 rounded-lg border border-dashed border-[var(--border-subtle)] bg-[var(--bg-surface)]/50 text-center">
+                    <p className="text-xs text-[var(--text-secondary)]">
+                      All {filedBookIdsInView.size}{' '}
+                      {filedBookIdsInView.size === 1 ? 'book' : 'books'} in {activeViewLabel} are
+                      organized inside folders above.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setHideFiledBooks(activeViewKey, false)}
+                      className="mt-2.5 text-xs font-medium text-[var(--accent)] hover:underline cursor-pointer"
+                    >
+                      Show filed books below
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-9">
+                    {!activeDrilledFolder && currentViewFolders.length > 0 && (
+                      <div className="flex items-center justify-between -mb-5">
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                          {hideFiledBooksInView && filedBookIdsInView.size > 0
+                            ? 'Ungrouped Books'
+                            : 'All Books in View'}{' '}
+                          <span className="font-mono-tabular font-normal">
+                            ({displayedBooks.length})
+                          </span>
+                        </h3>
+                      </div>
+                    )}
+                    {groupedBooks.map((group) => {
+                      const isGrouped = libraryPrefs.groupBy !== 'none';
+                      const isCollapsed = isGrouped && collapsedGroups.has(group.key);
+
+                      return (
+                        <section key={group.key}>
+                          {isGrouped && (
+                            <div className="mb-4 pb-2 border-b border-[var(--border-subtle)] flex items-center justify-between">
+                              <button
+                                type="button"
+                                onClick={() => toggleGroupCollapse(group.key)}
+                                className="inline-flex items-center gap-2 text-left cursor-pointer group"
+                              >
+                                {isCollapsed ? (
+                                  <ChevronRight className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--text-primary)]" />
+                                ) : (
+                                  <ChevronDown className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--text-primary)]" />
+                                )}
+                                <h2 className="font-serif-editorial text-base font-semibold text-[var(--text-primary)]">
+                                  {group.label}
+                                </h2>
+                                <span className="font-mono-tabular text-xs text-[var(--text-muted)]">
+                                  {group.books.length}
+                                </span>
+                              </button>
+                            </div>
+                          )}
+
+                          {!isCollapsed &&
+                            (viewMode === 'grid' ? (
+                              <BookGrid
+                                books={group.books}
+                                categories={categories}
+                                selectedIds={selectedIds}
+                                isSelectionMode={isSelectionMode}
+                                coverSize={libraryPrefs.coverSize}
+                                cardDetails={libraryPrefs.cardDetails}
+                                inspectorOpen={libraryPrefs.inspectorOpen}
+                                inspectedBookId={inspectedBook?.id ?? null}
+                                onOpenBook={(book) => void openBookInTab(book.id)}
+                                onInspectBook={handleInspectBook}
+                                onEditBook={(book) => setEditingBookId(book.id)}
+                                onToggleFavorite={(book) => void handleToggleFavorite(book)}
+                                onToggleSelect={handleToggleSelect}
+                                onRemoveFromFolder={
+                                  activeDrilledFolder
+                                    ? (book) =>
+                                        void handleRemoveBookFromViewFolder(
+                                          book.id,
+                                          activeDrilledFolder.id
+                                        )
+                                    : undefined
+                                }
+                              />
+                            ) : (
+                              <BookTable
+                                books={group.books}
+                                categories={categories}
+                                folders={folders}
+                                selectedIds={selectedIds}
+                                allSelected={allVisibleSelected}
+                                inspectorOpen={libraryPrefs.inspectorOpen}
+                                inspectedBookId={inspectedBook?.id ?? null}
+                                sortField={sortField}
+                                sortDirection={sortDirection}
+                                onSortChange={handleSortFieldClick}
+                                onToggleSelect={handleToggleSelect}
+                                onToggleSelectAll={handleToggleSelectAllVisible}
+                                onOpenBook={(book) => void openBookInTab(book.id)}
+                                onInspectBook={handleInspectBook}
+                                onEditBook={(book) => setEditingBookId(book.id)}
+                                onToggleFavorite={(book) => void handleToggleFavorite(book)}
+                              />
+                            ))}
+                        </section>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </main>
@@ -1711,8 +2241,8 @@ export default function App() {
       {!isHighlightsHubActive && (
         <BulkActionBar
           selectedCount={selectedIds.size}
-          totalVisibleCount={visibleBooks.length}
-          onSelectAll={() => setSelectedIds(new Set(visibleBooks.map((b) => b.id)))}
+          totalVisibleCount={displayedBooks.length}
+          onSelectAll={() => setSelectedIds(new Set(displayedBooks.map((b) => b.id)))}
           onClearSelection={handleClearSelection}
           onBulkEdit={() => setBulkEditOpen(true)}
           onBulkFavorite={() => void handleBulkFavorite()}
@@ -1783,6 +2313,29 @@ export default function App() {
           booksToDelete={selectedBookRecords}
           onConfirm={() => void handleConfirmBulkDelete()}
           onClose={() => setBulkDeleteOpen(false)}
+        />
+      )}
+
+      {/* Add Books to View Folder Modal */}
+      {addBooksTargetFolder && (
+        <AddBooksToFolderModal
+          folder={addBooksTargetFolder}
+          availableBooks={visibleBooks}
+          onSave={(folderId, nextBookIds) => void handleSaveViewFolderBooks(folderId, nextBookIds)}
+          onClose={() => setAddBooksFolderId(null)}
+        />
+      )}
+
+      {/* Import Full ZIP Backup Modal */}
+      {pendingBackup && (
+        <ImportBackupModal
+          backup={pendingBackup}
+          existingBooksCount={books.length}
+          isRestoring={isRestoringBackup}
+          onConfirm={(mode) => void handleConfirmImportBackup(mode)}
+          onCancel={() => {
+            if (!isRestoringBackup) setPendingBackup(null);
+          }}
         />
       )}
 
