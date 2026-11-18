@@ -12,6 +12,7 @@ import type {
   ViewFolderRecord,
 } from '../types/library';
 import {libraryDb, type BackupRestoreSnapshot} from './db';
+import {normalizeBookFolders} from './formatters';
 
 export interface FolioBackupManifest {
   version: number;
@@ -145,7 +146,7 @@ export async function parseLibraryBackupZip(file: File): Promise<ParsedBackupArc
     throw new Error('This archive does not match the Folio backup format.');
   }
 
-  const books = parsed.books as BookRecord[];
+  const books = (parsed.books as BookRecord[]).map((b) => normalizeBookFolders(b));
   const folders = Array.isArray(parsed.folders) ? (parsed.folders as FolderRecord[]) : [];
   const viewFolders = Array.isArray(parsed.viewFolders)
     ? (parsed.viewFolders as ViewFolderRecord[])

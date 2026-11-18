@@ -27,6 +27,7 @@ import {
 import {
   FOLDER_COLORS,
   formatFileSize,
+  getBookFolderIds,
   getFolderColorHex,
   getFolderDescendantIds,
 } from '../../lib/formatters';
@@ -214,7 +215,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
       const descendants = getFolderDescendantIds(folders, folder.id);
       counts.set(
         folder.id,
-        books.filter((b) => b.folderId !== null && descendants.has(b.folderId)).length
+        books.filter((b) => getBookFolderIds(b).some((id) => descendants.has(id))).length
       );
     }
     return counts;

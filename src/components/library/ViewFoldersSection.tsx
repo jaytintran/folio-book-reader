@@ -13,9 +13,11 @@ import {
   X,
 } from 'lucide-react';
 import React, {useRef, useState} from 'react';
+import {COVER_PALETTES} from '../../lib/formatters';
 import type {
   BookRecord,
   CoverSize,
+  ViewFolderCardLayout,
   ViewFolderDisplayMode,
   ViewFolderRecord,
 } from '../../types/library';
@@ -26,12 +28,14 @@ interface ViewFoldersSectionProps {
   viewFolders: ViewFolderRecord[];
   viewBooks: BookRecord[];
   displayMode: ViewFolderDisplayMode;
+  cardLayout: ViewFolderCardLayout;
   hideFiledBooks: boolean;
   filedBooksCount: number;
   coverSize: CoverSize;
   inspectorOpen: boolean;
   inspectedBookId: string | null;
   onDisplayModeChange: (mode: ViewFolderDisplayMode) => void;
+  onCardLayoutChange: (layout: ViewFolderCardLayout) => void;
   onToggleHideFiled: () => void;
   onCreateFolder: (name: string) => void;
   onRenameFolder: (folderId: string, name: string) => void;
@@ -57,6 +61,96 @@ const CAROUSEL_BOOK_WIDTH_BY_SIZE: Record<CoverSize, string> = {
   compact: 'w-[104px] sm:w-[112px]',
   standard: 'w-[126px] sm:w-[138px]',
   large: 'w-[154px] sm:w-[168px]',
+};
+
+const CARD_LAYOUT_OPTIONS: Array<{id: ViewFolderCardLayout; label: string; title: string}> = [
+  {id: 'stacked', label: 'Stacked', title: 'Fanned stacked cover preview'},
+  {id: 'auto', label: 'Auto', title: 'Auto grid density based on book count'},
+  {id: '2x2', label: '2×2', title: '2×2 cover grid inside folder card'},
+  {id: '3x3', label: '3×3', title: '3×3 cover grid inside folder card'},
+  {id: '4x4', label: '4×4', title: '4×4 cover grid inside folder card'},
+];
+
+function resolveGridColumns(layout: ViewFolderCardLayout, count: number): 1 | 2 | 3 | 4 {
+  if (layout === '2x2') return 2;
+  if (layout === '3x3') return 3;
+  if (layout === '4x4') return 4;
+  // Auto adapts cleanly to folder size
+  if (count <= 1) return 1;
+  if (count <= 4) return 2;
+  if (count <= 9) return 3;
+  return 4;
+}
+
+const FolderMiniCover: React.FC<{book: BookRecord; cols: 1 | 2 | 3 | 4}> = ({book, cols}) => {
+  const [imgFailed, setImgFailed] = useState(false);
+  const palette = COVER_PALETTES[Math.abs(book.coverPaletteIndex) % COVER_PALETTES.length];
+  const showImage = Boolean(book.coverDataUrl && !imgFailed);
+
+  if (showImage && book.coverDataUrl) {
+    return (
+      <div className="relative aspect-[3/4] w-full overflow-hidden rounded-[3px] border border-[var(--border-subtle)] bg-[var(--bg-sidebar)] shadow-2xs">
+        <img
+          src={book.coverDataUrl}
+          alt={book.title}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setImgFailed(true)}
+          className="w-full h-full object-cover pointer-events-none select-none"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 left-0 w-1.5 bg-gradient-to-r from-black/22 via-white/8 to-transparent"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="relative aspect-[3/4] w-full overflow-hidden rounded-[3px] border border-[var(--border-subtle)] flex flex-col select-none shadow-2xs"
+      style={{backgroundColor: palette.bg, color: palette.ink}}
+      title={book.title}
+    >
+      <div
+        aria-hidden="true"
+        className="absolute inset-y-0 left-0 w-[10%]"
+        style={{backgroundColor: palette.spine}}
+      />
+      <div
+        className={`relative z-10 flex flex-col justify-between h-full pl-[18%] pr-[10%] ${
+          cols === 1 ? 'py-3' : cols === 2 ? 'py-1.5' : 'py-1'
+        }`}
+      >
+        {cols <= 2 ? (
+          <>
+            <p
+              className={`font-serif-editorial font-semibold leading-tight overflow-hidden ${
+                cols === 1 ? 'text-xs line-clamp-4' : 'text-[8px] line-clamp-3'
+              }`}
+            >
+              {book.title}
+            </p>
+            <div
+              className="mt-auto h-[1.5px] w-2/3 opacity-75"
+              style={{backgroundColor: palette.accent}}
+            />
+          </>
+        ) : (
+          <>
+            <div
+              className="h-[2px] w-3/4 rounded-xs opacity-85 mt-0.5"
+              style={{backgroundColor: palette.accent}}
+            />
+            <div
+              className="mt-auto h-[1.5px] w-1/2 rounded-xs opacity-45"
+              style={{backgroundColor: palette.ink}}
+            />
+          </>
+        )}
+      </div>
+    </div>
+  );
 };
 
 function hasBookDragPayload(dt: DataTransfer): boolean {
@@ -348,12 +442,14 @@ export const ViewFoldersSection: React.FC<ViewFoldersSectionProps> = ({
   viewFolders,
   viewBooks,
   displayMode,
+  cardLayout,
   hideFiledBooks,
   filedBooksCount,
   coverSize,
   inspectorOpen,
   inspectedBookId,
   onDisplayModeChange,
+  onCardLayoutChange,
   onToggleHideFiled,
   onCreateFolder,
   onRenameFolder,
@@ -370,6 +466,7 @@ export const ViewFoldersSection: React.FC<ViewFoldersSectionProps> = ({
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+  const lastGridScrollAtRef = useRef<number>(0);
 
   const bookById = new Map(viewBooks.map((b) => [b.id, b]));
 
@@ -472,6 +569,31 @@ export const ViewFoldersSection: React.FC<ViewFoldersSectionProps> = ({
             </div>
           )}
 
+          {/* Folder Card Layout Selector (per-view, visible in Card mode) */}
+          {viewFolders.length > 0 && displayMode === 'card' && (
+            <div
+              role="group"
+              aria-label="Folder card cover layout"
+              className="inline-flex items-center p-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-sidebar)]"
+            >
+              {CARD_LAYOUT_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  title={opt.title}
+                  onClick={() => onCardLayoutChange(opt.id)}
+                  className={`px-2 py-1 text-[11px] font-medium rounded transition-colors cursor-pointer whitespace-nowrap ${
+                    cardLayout === opt.id
+                      ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* New Folder Button */}
           {!creating && (
             <button
@@ -561,10 +683,12 @@ export const ViewFoldersSection: React.FC<ViewFoldersSectionProps> = ({
                   }}
                   className="group flex flex-col min-w-0"
                 >
-                  {/* 3:4 Archival Folder Card with Stacked Mini Covers Preview */}
+                  {/* 3:4 Archival Folder Card with Stacked or Scrollable Grid Mini Covers */}
                   <div
                     onClick={() => {
-                      if (!isEditing) onOpenFolder(folder.id);
+                      if (isEditing) return;
+                      if (Date.now() - lastGridScrollAtRef.current < 240) return;
+                      onOpenFolder(folder.id);
                     }}
                     className={`relative aspect-[3/4] rounded-[5px] border transition-all duration-150 cursor-pointer flex items-center justify-center overflow-hidden group-hover:-translate-y-0.5 ${
                       isDragOver
@@ -575,17 +699,17 @@ export const ViewFoldersSection: React.FC<ViewFoldersSectionProps> = ({
                     {/* Subtle archival folder tab accent across top */}
                     <div
                       aria-hidden="true"
-                      className="absolute top-0 left-0 right-0 h-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-subtle)]"
+                      className="absolute top-0 left-0 right-0 h-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-subtle)] z-20"
                     />
 
-                    {previewBooks.length === 0 ? (
+                    {booksInFolder.length === 0 ? (
                       <div className="flex flex-col items-center justify-center gap-2 px-4 text-center">
                         <Folder className="w-7 h-7 text-[var(--text-muted)] opacity-60" />
                         <span className="text-[11px] text-[var(--text-muted)]">
                           Drop books here
                         </span>
                       </div>
-                    ) : (
+                    ) : cardLayout === 'stacked' ? (
                       <div className="relative w-[78%] h-[72%] mt-2 flex items-center justify-center">
                         {previewBooks.map((book, idx) => {
                           const total = previewBooks.length;
@@ -624,6 +748,41 @@ export const ViewFoldersSection: React.FC<ViewFoldersSectionProps> = ({
                           );
                         })}
                       </div>
+                    ) : (
+                      (() => {
+                        const cols = resolveGridColumns(cardLayout, booksInFolder.length);
+                        const gridColsClass =
+                          cols === 1
+                            ? 'grid-cols-1 gap-2 p-4 pt-5'
+                            : cols === 2
+                              ? 'grid-cols-2 gap-2 p-2.5 pt-3.5'
+                              : cols === 3
+                                ? 'grid-cols-3 gap-1.5 p-2 pt-3'
+                                : 'grid-cols-4 gap-1 p-1.5 pt-2.5';
+                        const hasOverflow = booksInFolder.length > cols * cols;
+                        return (
+                          <>
+                            <div
+                              onScroll={() => {
+                                lastGridScrollAtRef.current = Date.now();
+                              }}
+                              className="w-full h-full overflow-y-auto overscroll-contain"
+                            >
+                              <div className={`grid content-start ${gridColsClass}`}>
+                                {booksInFolder.map((book) => (
+                                  <FolderMiniCover key={book.id} book={book} cols={cols} />
+                                ))}
+                              </div>
+                            </div>
+                            {hasOverflow && (
+                              <div
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-[var(--bg-surface)] via-[var(--bg-surface)]/70 to-transparent z-10"
+                              />
+                            )}
+                          </>
+                        );
+                      })()
                     )}
 
                     {/* Quick Hover Actions (top-right) */}

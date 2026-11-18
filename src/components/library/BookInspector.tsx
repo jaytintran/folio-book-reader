@@ -16,6 +16,7 @@ import {
   formatFileSize,
   formatRelativeDate,
   formatShortDate,
+  getBookFolderIds,
   HIGHLIGHT_COLORS,
 } from '../../lib/formatters';
 import type {
@@ -305,12 +306,24 @@ export const BookInspector: React.FC<BookInspectorProps> = ({
                 <dd className="text-[var(--text-primary)] text-right truncate">{book.series}</dd>
               </div>
             )}
-            <div className="flex items-baseline justify-between gap-3">
-              <dt className="text-[var(--text-muted)] shrink-0">Folder</dt>
-              <dd className="text-[var(--text-primary)] text-right truncate">
-                {book.folderId ? folderPathById.get(book.folderId) || '—' : 'Unfiled'}
-              </dd>
-            </div>
+            {(() => {
+              const assignedFolders = getBookFolderIds(book)
+                .map((id) => folderPathById.get(id))
+                .filter((name): name is string => Boolean(name));
+              return (
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-[var(--text-muted)] shrink-0">
+                    {assignedFolders.length > 1 ? 'Folders' : 'Folder'}
+                  </dt>
+                  <dd
+                    className="text-[var(--text-primary)] text-right"
+                    title={assignedFolders.join(' · ')}
+                  >
+                    {assignedFolders.length > 0 ? assignedFolders.join(' · ') : 'Unfiled'}
+                  </dd>
+                </div>
+              );
+            })()}
             <div className="flex items-baseline justify-between gap-3">
               <dt className="text-[var(--text-muted)] shrink-0">Category</dt>
               <dd className="text-[var(--text-primary)] text-right truncate">

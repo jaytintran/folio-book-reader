@@ -18,6 +18,8 @@ export type SidebarSectionKey = 'library' | 'folders' | 'categories' | 'tags';
 
 export type ViewFolderDisplayMode = 'card' | 'carousel';
 
+export type ViewFolderCardLayout = 'stacked' | 'auto' | '2x2' | '3x3' | '4x4';
+
 export interface CardDetailOptions {
   author: boolean;
   format: boolean;
@@ -34,6 +36,7 @@ export interface LibraryPreferences {
   collapsedSidebarSections: Record<SidebarSectionKey, boolean>;
   sidebarWidth: number;
   viewFolderDisplayByView: Record<string, ViewFolderDisplayMode>;
+  viewFolderCardLayoutByView: Record<string, ViewFolderCardLayout>;
   hideFiledBooksByView: Record<string, boolean>;
 }
 
@@ -77,6 +80,7 @@ export interface BookRecord {
   lastReadAt: number | null;
   categoryId: string | null;
   folderId: string | null;
+  folderIds?: string[];
   tags: string[];
   series: string;
   publisher: string;

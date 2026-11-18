@@ -5,6 +5,7 @@ import type {
   ReaderPreferences,
   SidebarSectionKey,
   ThemeMode,
+  ViewFolderCardLayout,
   ViewFolderDisplayMode,
 } from '../types/library';
 
@@ -54,6 +55,7 @@ export const DEFAULT_LIBRARY_PREFERENCES: LibraryPreferences = {
   },
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   viewFolderDisplayByView: {},
+  viewFolderCardLayoutByView: {},
   hideFiledBooksByView: {},
 };
 
@@ -96,6 +98,9 @@ function loadLibraryPreferences(): LibraryPreferences {
       },
       viewFolderDisplayByView: {
         ...(parsed.viewFolderDisplayByView ?? {}),
+      },
+      viewFolderCardLayoutByView: {
+        ...(parsed.viewFolderCardLayoutByView ?? {}),
       },
       hideFiledBooksByView: {
         ...(parsed.hideFiledBooksByView ?? {}),
@@ -181,6 +186,19 @@ export function usePreferences() {
     }));
   }, []);
 
+  const setViewFolderCardLayout = useCallback(
+    (viewKey: string, layout: ViewFolderCardLayout) => {
+      setLibraryPrefs((prev) => ({
+        ...prev,
+        viewFolderCardLayoutByView: {
+          ...prev.viewFolderCardLayoutByView,
+          [viewKey]: layout,
+        },
+      }));
+    },
+    []
+  );
+
   const setHideFiledBooks = useCallback((viewKey: string, hide: boolean) => {
     setLibraryPrefs((prev) => ({
       ...prev,
@@ -218,6 +236,9 @@ export function usePreferences() {
           },
           viewFolderDisplayByView: {
             ...(nextLibrary.viewFolderDisplayByView ?? {}),
+          },
+          viewFolderCardLayoutByView: {
+            ...(nextLibrary.viewFolderCardLayoutByView ?? {}),
           },
           hideFiledBooksByView: {
             ...(nextLibrary.hideFiledBooksByView ?? {}),
@@ -257,6 +278,7 @@ export function usePreferences() {
     updateCardDetails,
     toggleSidebarSection,
     setViewFolderDisplay,
+    setViewFolderCardLayout,
     setHideFiledBooks,
     restorePreferencesFromBackup,
     toggleTheme,

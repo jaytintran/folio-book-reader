@@ -24,6 +24,7 @@ interface BookGridProps {
   onToggleSelect: (bookId: string, shiftKey: boolean) => void;
   onRemoveFromFolder?: (book: BookRecord) => void;
   onQuickAction?: (book: BookRecord) => void;
+  onContextMenuBook?: (book: BookRecord, e: React.MouseEvent) => void;
 }
 
 const GRID_COLUMNS_BY_SIZE: Record<CoverSize, string> = {
@@ -51,6 +52,7 @@ export const BookGrid: React.FC<BookGridProps> = ({
   onToggleSelect,
   onRemoveFromFolder,
   onQuickAction,
+  onContextMenuBook,
 }) => {
   const categoryNameById = new Map(categories.map((c) => [c.id, c.name]));
 
@@ -115,6 +117,11 @@ export const BookGrid: React.FC<BookGridProps> = ({
               e.dataTransfer.setData('application/x-folio-book-id', book.id);
               e.dataTransfer.setData('application/x-folio-book-ids', JSON.stringify(dragIds));
               e.dataTransfer.effectAllowed = 'move';
+            }}
+            onContextMenu={(e) => {
+              if (!onContextMenuBook) return;
+              e.preventDefault();
+              onContextMenuBook(book, e);
             }}
             className="group flex flex-col min-w-0"
           >

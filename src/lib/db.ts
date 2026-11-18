@@ -7,6 +7,7 @@ import type {
   HighlightRecord,
   ViewFolderRecord,
 } from '../types/library';
+import {getBookFolderIds, normalizeBookFolders, withBookFolderIds} from './formatters';
 
 const DB_NAME = 'folio_offline_library_v1';
 const DB_VERSION = 2;
@@ -117,7 +118,7 @@ export const libraryDb = {
     const db = await openDB();
     const tx = db.transaction(STORES.books, 'readonly');
     const items = await reqToPromise<BookRecord[]>(tx.objectStore(STORES.books).getAll());
-    return items.sort((a, b) => b.addedAt - a.addedAt);
+    return items.map((b) => normalizeBookFolders(b)).sort((a, b) => b.addedAt - a.addedAt);
   },
 
   async getAllBookFiles(): Promise<BookFileBlob[]> {
@@ -235,8 +236,10 @@ export const libraryDb = {
     const bookStore = tx.objectStore(STORES.books);
     const books = await reqToPromise<BookRecord[]>(bookStore.getAll());
     for (const book of books) {
-      if (book.folderId === folderId) {
-        bookStore.put({...book, folderId: null});
+      const currentIds = getBookFolderIds(book);
+      if (currentIds.includes(folderId)) {
+        const nextIds = currentIds.filter((id) => id !== folderId);
+        bookStore.put(withBookFolderIds(book, nextIds));
       }
     }
     await txDone(tx);

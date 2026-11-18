@@ -65,6 +65,7 @@ export async function importBookFile(
     lastReadAt: null,
     categoryId: defaults?.categoryId ?? null,
     folderId: defaults?.folderId ?? null,
+    folderIds: defaults?.folderId ? [defaults.folderId] : [],
     tags: [],
     series: '',
     publisher: meta.publisher || '',

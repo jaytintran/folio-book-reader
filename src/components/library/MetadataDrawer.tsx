@@ -1,9 +1,12 @@
-import {Plus, Trash2, X} from 'lucide-react';
+import {Check, Folder, Plus, Trash2, X} from 'lucide-react';
 import React, {useMemo, useState} from 'react';
 import {
   flattenFoldersHierarchy,
   formatFileSize,
   formatShortDate,
+  getBookFolderIds,
+  getFolderColorHex,
+  withBookFolderIds,
 } from '../../lib/formatters';
 import type {
   BookRecord,
@@ -46,7 +49,7 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
   const [language, setLanguage] = useState(book.language);
   const [description, setDescription] = useState(book.description);
   const [categoryId, setCategoryId] = useState<string>(book.categoryId ?? '');
-  const [folderId, setFolderId] = useState<string>(book.folderId ?? '');
+  const [folderIds, setFolderIds] = useState<string[]>(() => getBookFolderIds(book));
   const [status, setStatus] = useState<ReadingStatus>(book.status);
   const [isFavorite, setIsFavorite] = useState(book.isFavorite);
   const [tags, setTags] = useState<string[]>(book.tags);
@@ -95,25 +98,29 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
     const updatedProgress =
       status === 'finished' ? 100 : status === 'unread' ? 0 : Math.max(1, book.progress);
 
-    onSave({
-      ...book,
-      title: title.trim() || book.title,
-      author: author.trim() || 'Unknown Author',
-      series: series.trim(),
-      publisher: publisher.trim(),
-      year: year.trim(),
-      language: language.trim() || 'en',
-      description: description.trim(),
-      categoryId: categoryId || null,
-      folderId: folderId || null,
-      status,
-      progress: status === book.status ? book.progress : updatedProgress,
-      isFavorite,
-      tags: finalTags,
-      coverDataUrl,
-      coverPaletteIndex,
-      coverStyle,
-    });
+    onSave(
+      withBookFolderIds(
+        {
+          ...book,
+          title: title.trim() || book.title,
+          author: author.trim() || 'Unknown Author',
+          series: series.trim(),
+          publisher: publisher.trim(),
+          year: year.trim(),
+          language: language.trim() || 'en',
+          description: description.trim(),
+          categoryId: categoryId || null,
+          status,
+          progress: status === book.status ? book.progress : updatedProgress,
+          isFavorite,
+          tags: finalTags,
+          coverDataUrl,
+          coverPaletteIndex,
+          coverStyle,
+        },
+        folderIds
+      )
+    );
   };
 
   const suggestedTags = existingTags.filter(
@@ -287,30 +294,44 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">Folder</label>
-                <button
-                  type="button"
-                  onClick={() => setShowQuickFolder((v) => !v)}
-                  className="text-[11px] text-[var(--accent)] hover:underline cursor-pointer"
-                >
-                  + New
-                </button>
+                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                  Folders{folderIds.length > 0 ? ` (${folderIds.length})` : ''}
+                </label>
+                <div className="flex items-center gap-2.5">
+                  {folderIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFolderIds([])}
+                      className="text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowQuickFolder((v) => !v)}
+                    className="text-[11px] text-[var(--accent)] hover:underline cursor-pointer"
+                  >
+                    + New
+                  </button>
+                </div>
               </div>
-              {showQuickFolder ? (
-                <div className="flex gap-1.5">
+              {showQuickFolder && (
+                <div className="flex gap-1.5 mb-2">
                   <input
                     type="text"
+                    autoFocus
                     value={quickFolder}
                     onChange={(e) => setQuickFolder(e.target.value)}
                     placeholder="Folder name"
-                    className="flex-1 min-w-0 px-2.5 py-2 text-xs rounded-md border border-[var(--border-strong)] bg-[var(--bg-input)] text-[var(--text-primary)]"
+                    className="flex-1 min-w-0 px-2.5 py-1.5 text-xs rounded-md border border-[var(--border-strong)] bg-[var(--bg-input)] text-[var(--text-primary)]"
                   />
                   <button
                     type="button"
                     onClick={async () => {
                       if (!quickFolder.trim()) return;
                       const created = await onCreateFolder(quickFolder.trim());
-                      setFolderId(created.id);
+                      setFolderIds((prev) => (prev.includes(created.id) ? prev : [...prev, created.id]));
                       setQuickFolder('');
                       setShowQuickFolder(false);
                     }}
@@ -319,19 +340,50 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
                     Add
                   </button>
                 </div>
+              )}
+              {flatFolders.length === 0 ? (
+                <p className="px-3 py-2 text-xs rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-muted)]">
+                  No folders yet.
+                </p>
               ) : (
-                <select
-                  value={folderId}
-                  onChange={(e) => setFolderId(e.target.value)}
-                  className="w-full px-3 py-2 text-sm rounded-md border border-[var(--border-strong)] bg-[var(--bg-input)] text-[var(--text-primary)]"
-                >
-                  <option value="">No folder</option>
-                  {flatFolders.map(({folder, pathLabel}) => (
-                    <option key={folder.id} value={folder.id}>
-                      {pathLabel}
-                    </option>
-                  ))}
-                </select>
+                <div className="max-h-36 overflow-y-auto rounded-md border border-[var(--border-strong)] bg-[var(--bg-input)] divide-y divide-[var(--border-subtle)]">
+                  {flatFolders.map(({folder, depth, pathLabel}) => {
+                    const checked = folderIds.includes(folder.id);
+                    return (
+                      <button
+                        key={folder.id}
+                        type="button"
+                        onClick={() =>
+                          setFolderIds((prev) =>
+                            prev.includes(folder.id)
+                              ? prev.filter((id) => id !== folder.id)
+                              : [...prev, folder.id]
+                          )
+                        }
+                        title={pathLabel}
+                        className="w-full px-2.5 py-1.5 flex items-center justify-between gap-2 text-left text-xs hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
+                        style={{paddingLeft: `${10 + depth * 12}px`}}
+                      >
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <Folder
+                            className="w-3.5 h-3.5 shrink-0"
+                            style={{color: getFolderColorHex(folder.color) ?? 'var(--text-muted)'}}
+                          />
+                          <span className="truncate text-[var(--text-primary)]">{folder.name}</span>
+                        </span>
+                        <span
+                          className={`w-4 h-4 rounded flex items-center justify-center border shrink-0 transition-colors ${
+                            checked
+                              ? 'bg-[var(--accent)] border-[var(--accent)] text-[var(--accent-contrast)]'
+                              : 'border-[var(--border-strong)] text-transparent'
+                          }`}
+                        >
+                          <Check className="w-3 h-3 stroke-[2.5]" />
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </div>

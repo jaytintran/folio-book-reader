@@ -26,6 +26,10 @@ import {
 } from 'lucide-react';
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {AddBooksToFolderModal} from './components/library/AddBooksToFolderModal';
+import {
+  BookContextMenu,
+  type BookContextMenuState,
+} from './components/library/BookContextMenu';
 import {BookGrid} from './components/library/BookGrid';
 import {BookInspector} from './components/library/BookInspector';
 import {BookTable} from './components/library/BookTable';
@@ -41,6 +45,11 @@ import {
   type PendingDuplicateItem,
 } from './components/library/DuplicateImportModal';
 import {EmptyLibraryDropzone} from './components/library/EmptyLibraryDropzone';
+import {FloatingFolderDropDock} from './components/library/FloatingFolderDropDock';
+import {
+  FolderDropActionModal,
+  type PendingFolderDrop,
+} from './components/library/FolderDropActionModal';
 import {HighlightsHubView} from './components/library/HighlightsHubView';
 import {ImportBackupModal} from './components/library/ImportBackupModal';
 import {
@@ -72,7 +81,13 @@ import {
   type ParsedBackupArchive,
 } from './lib/backup';
 import {libraryDb} from './lib/db';
-import {flattenFoldersHierarchy, getFolderDescendantIds} from './lib/formatters';
+import {
+  flattenFoldersHierarchy,
+  getBookFolderIds,
+  getFolderColorHex,
+  getFolderDescendantIds,
+  withBookFolderIds,
+} from './lib/formatters';
 import {importBookFile} from './lib/parsers';
 import type {
   BookFileBlob,
@@ -85,6 +100,7 @@ import type {
   GroupByField,
   HighlightRecord,
   LibraryViewMode,
+  ReadingStatus,
   SortDirection,
   SortField,
   ToastMessage,
@@ -102,6 +118,32 @@ function normalizeMatchText(str: string): string {
   return str.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function hasBookDragPayload(dt: DataTransfer | null): boolean {
+  if (!dt) return false;
+  return (
+    dt.types.includes('application/x-folio-book-ids') ||
+    dt.types.includes('application/x-folio-book-id')
+  );
+}
+
+function extractDraggedBookIds(dt: DataTransfer | null): string[] {
+  if (!dt) return [];
+  const multi = dt.getData('application/x-folio-book-ids');
+  if (multi) {
+    try {
+      const parsed = JSON.parse(multi);
+      if (Array.isArray(parsed)) {
+        const ids = parsed.filter((id): id is string => typeof id === 'string');
+        if (ids.length > 0) return ids;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  const single = dt.getData('application/x-folio-book-id');
+  return single ? [single] : [];
+}
+
 export default function App() {
   const {
     prefs,
@@ -111,6 +153,7 @@ export default function App() {
     updateCardDetails,
     toggleSidebarSection,
     setViewFolderDisplay,
+    setViewFolderCardLayout,
     setHideFiledBooks,
     restorePreferencesFromBackup,
     toggleTheme,
@@ -165,19 +208,26 @@ export default function App() {
   const lastSelectedIdRef = useRef<string | null>(null);
 
   const [editingBookId, setEditingBookId] = useState<string | null>(null);
-  const [bulkEditOpen, setBulkEditOpen] = useState(false);
-  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkEditTargetIds, setBulkEditTargetIds] = useState<string[] | null>(null);
+  const [pendingDeleteBookIds, setPendingDeleteBookIds] = useState<string[] | null>(null);
+  const [contextMenu, setContextMenu] = useState<BookContextMenuState | null>(null);
 
   // Mobile-specific sheets
   const [mobileFilterSheetOpen, setMobileFilterSheetOpen] = useState(false);
   const [quickActionBookId, setQuickActionBookId] = useState<string | null>(null);
   const [mobileOrganizeBookIds, setMobileOrganizeBookIds] = useState<string[] | null>(null);
 
-  // Per-view folder drill-in & add-books modal state
+  // Per-view folder drill-in, floating drop dock & add-books modal state
   const [activeViewFolderId, setActiveViewFolderId] = useState<string | null>(null);
   const [addBooksFolderId, setAddBooksFolderId] = useState<string | null>(null);
   const [isRenamingDrilledFolder, setIsRenamingDrilledFolder] = useState(false);
   const [drilledRenameDraft, setDrilledRenameDraft] = useState('');
+  const [pendingFolderDrop, setPendingFolderDrop] = useState<PendingFolderDrop | null>(null);
+  const [isDraggingBook, setIsDraggingBook] = useState(false);
+  const [isBackBreadcrumbDragOver, setIsBackBreadcrumbDragOver] = useState(false);
+  const [isFoldersOutOfView, setIsFoldersOutOfView] = useState(false);
+  const libraryMainRef = useRef<HTMLElement>(null);
+  const foldersSentinelRef = useRef<HTMLDivElement>(null);
 
   // Backup export / import state
   const [isExportingBackup, setIsExportingBackup] = useState(false);
@@ -275,6 +325,29 @@ export default function App() {
     };
   }, [reloadLibraryData, notify]);
 
+  // Track active internal book drags to highlight breadcrumb & floating drop dock
+  useEffect(() => {
+    const onDragStart = (e: DragEvent) => {
+      if (hasBookDragPayload(e.dataTransfer)) {
+        setIsDraggingBook(true);
+        setContextMenu(null);
+      }
+    };
+    const onDragDone = () => {
+      setIsDraggingBook(false);
+      setIsBackBreadcrumbDragOver(false);
+    };
+    window.addEventListener('dragstart', onDragStart);
+    window.addEventListener('dragend', onDragDone);
+    window.addEventListener('drop', onDragDone);
+    return () => {
+      window.removeEventListener('dragstart', onDragStart);
+      window.removeEventListener('dragend', onDragDone);
+      window.removeEventListener('drop', onDragDone);
+    };
+  }, []);
+
+
   // Global Cmd/Ctrl+K Command Palette shortcut (in Library view)
   useEffect(() => {
     if (readingBookId) return;
@@ -320,7 +393,7 @@ export default function App() {
         if (activeFilter.id === 'finished' && book.status !== 'finished') return false;
         if (activeFilter.id === 'favorites' && !book.isFavorite) return false;
       } else if (activeFilter.kind === 'folder' && activeFolderDescendants) {
-        if (!book.folderId || !activeFolderDescendants.has(book.folderId)) return false;
+        if (!getBookFolderIds(book).some((id) => activeFolderDescendants.has(id))) return false;
       } else if (activeFilter.kind === 'category') {
         if (book.categoryId !== activeFilter.id) return false;
       }
@@ -401,6 +474,37 @@ export default function App() {
     [viewFolders, activeViewKey]
   );
 
+  // Observe whether the top folders section has scrolled out of view in the library canvas
+  useEffect(() => {
+    const root = libraryMainRef.current;
+    const sentinel = foldersSentinelRef.current;
+    if (!root || !sentinel || typeof IntersectionObserver === 'undefined') {
+      setIsFoldersOutOfView(false);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        const rootTop = entry.rootBounds?.top ?? 0;
+        const scrolledPast = !entry.isIntersecting && entry.boundingClientRect.bottom <= rootTop + 12;
+        setIsFoldersOutOfView(scrolledPast);
+      },
+      {root, threshold: 0}
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [
+    isHydrating,
+    books.length,
+    activeFilter,
+    activeViewFolderId,
+    currentViewFolders.length,
+    readingBookId,
+  ]);
+
   const activeDrilledFolder = useMemo(
     () =>
       activeViewFolderId
@@ -431,7 +535,24 @@ export default function App() {
   }, [currentViewFolders, visibleBooks]);
 
   const viewFolderDisplayMode = libraryPrefs.viewFolderDisplayByView[activeViewKey] ?? 'card';
+  const viewFolderCardLayout = libraryPrefs.viewFolderCardLayoutByView[activeViewKey] ?? 'stacked';
   const hideFiledBooksInView = libraryPrefs.hideFiledBooksByView[activeViewKey] ?? true;
+
+  const activeSidebarFolder = useMemo(
+    () =>
+      activeFilter.kind === 'folder'
+        ? folders.find((f) => f.id === activeFilter.id) ?? null
+        : null,
+    [activeFilter, folders]
+  );
+
+  const activeSidebarParentFolder = useMemo(
+    () =>
+      activeSidebarFolder?.parentId
+        ? folders.find((f) => f.id === activeSidebarFolder.parentId) ?? null
+        : null,
+    [activeSidebarFolder, folders]
+  );
 
   // Books displayed in the main grid/table (either drilled-in folder contents or ungrouped view books)
   const displayedBooks = useMemo(() => {
@@ -719,6 +840,7 @@ export default function App() {
             lastReadAt: null,
             categoryId: defaultCategoryId,
             folderId: defaultFolderId,
+            folderIds: defaultFolderId ? [defaultFolderId] : [],
             tags: [],
             series: '',
             publisher: item.metadata.publisher,
@@ -868,7 +990,17 @@ export default function App() {
           .filter((f) => f.id !== id)
           .map((f) => (f.parentId === id ? {...f, parentId: nextParentId} : f))
       );
-      setBooks((prev) => prev.map((b) => (b.folderId === id ? {...b, folderId: null} : b)));
+      setBooks((prev) =>
+        prev.map((b) => {
+          const fids = getBookFolderIds(b);
+          return fids.includes(id)
+            ? withBookFolderIds(
+                b,
+                fids.filter((fid) => fid !== id)
+              )
+            : b;
+        })
+      );
       if (activeFilter.kind === 'folder' && activeFilter.id === id) {
         setActiveFilter({kind: 'smart', id: 'all'});
       }
@@ -930,23 +1062,103 @@ export default function App() {
   );
 
   // Extended Drag-and-Drop Handlers (single or multi-selected books)
+  const executeDropToSidebarFolder = useCallback(
+    async (bookIds: string[], folderId: string, mode: 'add' | 'move') => {
+      const folder = folders.find((f) => f.id === folderId);
+      if (!folder) return;
+      const idSet = new Set(bookIds);
+      const targets = books.filter((b) => {
+        if (!idSet.has(b.id)) return false;
+        const current = getBookFolderIds(b);
+        if (mode === 'add') return !current.includes(folderId);
+        return !(current.length === 1 && current[0] === folderId);
+      });
+      if (targets.length === 0) return;
+
+      const updated = targets.map((b) => {
+        const current = getBookFolderIds(b);
+        const nextIds = mode === 'add' ? [...current, folderId] : [folderId];
+        return withBookFolderIds(b, nextIds);
+      });
+      await libraryDb.updateBooksBatch(updated);
+      const updatedMap = new Map(updated.map((b) => [b.id, b]));
+      setBooks((prev) => prev.map((b) => updatedMap.get(b.id) ?? b));
+      const verb = mode === 'add' ? 'Added' : 'Moved';
+      notify(
+        updated.length === 1
+          ? `${verb} "${updated[0].title}" to ${folder.name}`
+          : `${verb} ${updated.length} books to ${folder.name}`,
+        'success'
+      );
+    },
+    [books, folders, notify]
+  );
+
   const handleDropBooksToFolder = useCallback(
     async (bookIds: string[], folderId: string) => {
       const folder = folders.find((f) => f.id === folderId);
       if (!folder) return;
       const idSet = new Set(bookIds);
-      const targets = books.filter((b) => idSet.has(b.id) && b.folderId !== folderId);
+      const draggedBooks = books.filter((b) => idSet.has(b.id));
+      if (draggedBooks.length === 0) return;
+
+      const folderNameById = new Map(folders.map((f) => [f.id, f.name]));
+      const existingOtherFolderIds = new Set<string>();
+      for (const b of draggedBooks) {
+        for (const fid of getBookFolderIds(b)) {
+          if (fid !== folderId && folderNameById.has(fid)) {
+            existingOtherFolderIds.add(fid);
+          }
+        }
+      }
+
+      if (existingOtherFolderIds.size > 0) {
+        setPendingFolderDrop({
+          kind: 'sidebar',
+          targetFolderId: folderId,
+          targetFolderName: folder.name,
+          bookIds: draggedBooks.map((b) => b.id),
+          bookTitles: draggedBooks.map((b) => b.title),
+          existingFolderNames: Array.from(existingOtherFolderIds)
+            .map((id) => folderNameById.get(id))
+            .filter((name): name is string => Boolean(name)),
+        });
+        return;
+      }
+
+      await executeDropToSidebarFolder(
+        draggedBooks.map((b) => b.id),
+        folderId,
+        'add'
+      );
+    },
+    [books, folders, executeDropToSidebarFolder]
+  );
+
+  const handleRemoveBooksFromSidebarFolder = useCallback(
+    async (bookIds: string[], folderId: string) => {
+      const folder = folders.find((f) => f.id === folderId);
+      if (!folder) return;
+      const idSet = new Set(bookIds);
+      const descendants = getFolderDescendantIds(folders, folderId);
+      const targets = books.filter(
+        (b) => idSet.has(b.id) && getBookFolderIds(b).some((fid) => descendants.has(fid))
+      );
       if (targets.length === 0) return;
 
-      const updated = targets.map((b) => ({...b, folderId}));
+      const updated = targets.map((b) => {
+        const current = getBookFolderIds(b);
+        const nextIds = current.filter((fid) => !descendants.has(fid));
+        return withBookFolderIds(b, nextIds);
+      });
       await libraryDb.updateBooksBatch(updated);
       const updatedMap = new Map(updated.map((b) => [b.id, b]));
       setBooks((prev) => prev.map((b) => updatedMap.get(b.id) ?? b));
       notify(
         updated.length === 1
-          ? `Moved "${updated[0].title}" to ${folder.name}`
-          : `Moved ${updated.length} books to ${folder.name}`,
-        'success'
+          ? `Removed "${updated[0].title}" from "${folder.name}"`
+          : `Removed ${updated.length} books from "${folder.name}"`,
+        'info'
       );
     },
     [books, folders, notify]
@@ -1081,43 +1293,125 @@ export default function App() {
     [viewFolders, notify]
   );
 
-  const handleDropBooksToViewFolder = useCallback(
-    async (bookIds: string[], folderId: string) => {
+  const executeDropToViewFolder = useCallback(
+    async (bookIds: string[], folderId: string, mode: 'add' | 'move') => {
       const target = viewFolders.find((f) => f.id === folderId);
       if (!target) return;
-      const existingSet = new Set(target.bookIds);
-      const toAdd = bookIds.filter((id) => !existingSet.has(id));
-      if (toAdd.length === 0) return;
+      const idSet = new Set(bookIds);
 
-      const updated: ViewFolderRecord = {
-        ...target,
-        bookIds: [...target.bookIds, ...toAdd],
-      };
-      await libraryDb.saveViewFolder(updated);
-      setViewFolders((prev) => prev.map((f) => (f.id === folderId ? updated : f)));
+      const foldersToSave: ViewFolderRecord[] = [];
+      let changedCount = 0;
+
+      const nextViewFolders = viewFolders.map((vf) => {
+        if (vf.id === folderId) {
+          const existingSet = new Set(vf.bookIds);
+          const toAdd = bookIds.filter((id) => !existingSet.has(id));
+          if (toAdd.length > 0) {
+            changedCount = toAdd.length;
+            const updated: ViewFolderRecord = {...vf, bookIds: [...vf.bookIds, ...toAdd]};
+            foldersToSave.push(updated);
+            return updated;
+          }
+          return vf;
+        }
+        if (mode === 'move' && vf.viewKey === target.viewKey) {
+          const filtered = vf.bookIds.filter((id) => !idSet.has(id));
+          if (filtered.length !== vf.bookIds.length) {
+            const updated: ViewFolderRecord = {...vf, bookIds: filtered};
+            foldersToSave.push(updated);
+            return updated;
+          }
+        }
+        return vf;
+      });
+
+      if (foldersToSave.length === 0) return;
+
+      await Promise.all(foldersToSave.map((vf) => libraryDb.saveViewFolder(vf)));
+      setViewFolders(nextViewFolders);
+      const count = changedCount || bookIds.length;
+      const verb = mode === 'add' ? 'Added' : 'Moved';
       notify(
-        toAdd.length === 1
-          ? `Added book to "${target.name}"`
-          : `Added ${toAdd.length} books to "${target.name}"`,
+        count === 1
+          ? `${verb} book to "${target.name}"`
+          : `${verb} ${count} books to "${target.name}"`,
         'success'
       );
     },
     [viewFolders, notify]
   );
 
-  const handleRemoveBookFromViewFolder = useCallback(
-    async (bookId: string, folderId: string) => {
+  const handleDropBooksToViewFolder = useCallback(
+    async (bookIds: string[], folderId: string) => {
       const target = viewFolders.find((f) => f.id === folderId);
-      if (!target || !target.bookIds.includes(bookId)) return;
+      if (!target) return;
+      const idSet = new Set(bookIds);
+      const draggedBooks = books.filter((b) => idSet.has(b.id));
+      if (draggedBooks.length === 0) return;
+
+      const otherFoldersInSameView = viewFolders.filter(
+        (vf) =>
+          vf.viewKey === target.viewKey &&
+          vf.id !== folderId &&
+          vf.bookIds.some((bid) => idSet.has(bid))
+      );
+
+      if (otherFoldersInSameView.length > 0) {
+        setPendingFolderDrop({
+          kind: 'view',
+          targetFolderId: folderId,
+          targetFolderName: target.name,
+          bookIds: draggedBooks.map((b) => b.id),
+          bookTitles: draggedBooks.map((b) => b.title),
+          existingFolderNames: otherFoldersInSameView.map((vf) => vf.name),
+        });
+        return;
+      }
+
+      await executeDropToViewFolder(
+        draggedBooks.map((b) => b.id),
+        folderId,
+        'add'
+      );
+    },
+    [books, viewFolders, executeDropToViewFolder]
+  );
+
+  const handleRemoveBooksFromViewFolder = useCallback(
+    async (bookIds: string[], folderId: string) => {
+      const target = viewFolders.find((f) => f.id === folderId);
+      if (!target) return;
+      const idSet = new Set(bookIds);
+      const removedIds = target.bookIds.filter((id) => idSet.has(id));
+      if (removedIds.length === 0) return;
+
       const updated: ViewFolderRecord = {
         ...target,
-        bookIds: target.bookIds.filter((id) => id !== bookId),
+        bookIds: target.bookIds.filter((id) => !idSet.has(id)),
       };
       await libraryDb.saveViewFolder(updated);
       setViewFolders((prev) => prev.map((f) => (f.id === folderId ? updated : f)));
-      notify(`Removed book from "${target.name}"`, 'info');
+
+      if (removedIds.length === 1) {
+        const bookTitle = books.find((b) => b.id === removedIds[0])?.title;
+        notify(
+          bookTitle
+            ? `Removed "${bookTitle}" from "${target.name}"`
+            : `Removed book from "${target.name}"`,
+          'info'
+        );
+      } else {
+        notify(`Removed ${removedIds.length} books from "${target.name}"`, 'info');
+      }
     },
-    [viewFolders, notify]
+    [books, viewFolders, notify]
+  );
+
+  const handleRemoveBookFromViewFolder = useCallback(
+    async (bookId: string, folderId: string) => {
+      await handleRemoveBooksFromViewFolder([bookId], folderId);
+    },
+    [handleRemoveBooksFromViewFolder]
   );
 
   // Full ZIP Backup Export & Import Handlers
@@ -1293,56 +1587,284 @@ export default function App() {
     lastSelectedIdRef.current = null;
   }, []);
 
-  // Bulk Edit apply
+  // Bulk Edit Studio apply (Per-View Folders + Sidebar Folders + Tags + Metadata + Reading/Favorite)
   const handleApplyBulkEdit = useCallback(
     async (patch: BulkEditPatch) => {
-      const targetBooks = books.filter((b) => selectedIds.has(b.id));
+      const targetIdSet = new Set(bulkEditTargetIds ?? []);
+      const targetBooks = books.filter((b) => targetIdSet.has(b.id));
       if (targetBooks.length === 0) return;
 
-      const removeSet = new Set(patch.removeTags.map((t) => t.toLowerCase()));
+      const targetIds = targetBooks.map((b) => b.id);
 
-      const updatedBooks = targetBooks.map((book) => {
-        let nextFolderId = book.folderId;
-        if (patch.folderAction === 'set') nextFolderId = patch.folderId;
-        if (patch.folderAction === 'clear') nextFolderId = null;
-
-        let nextCategoryId = book.categoryId;
-        if (patch.categoryAction === 'set') nextCategoryId = patch.categoryId;
-        if (patch.categoryAction === 'clear') nextCategoryId = null;
-
-        let nextStatus = book.status;
-        let nextProgress = book.progress;
-        if (patch.statusAction !== 'keep') {
-          nextStatus = patch.statusAction;
-          if (nextStatus === 'finished') nextProgress = 100;
-          if (nextStatus === 'unread') nextProgress = 0;
-          if (nextStatus === 'reading' && nextProgress === 0) nextProgress = 1;
-        }
-
-        let nextTags = book.tags.filter((t) => !removeSet.has(t.toLowerCase()));
-        for (const t of patch.addTags) {
-          if (!nextTags.some((e) => e.toLowerCase() === t.toLowerCase())) {
-            nextTags.push(t);
+      // 1. Update Per-View Folders
+      if (patch.addViewFolderIds.length > 0 || patch.removeViewFolderIds.length > 0) {
+        const addVfSet = new Set(patch.addViewFolderIds);
+        const removeVfSet = new Set(patch.removeViewFolderIds);
+        const foldersToSave: ViewFolderRecord[] = [];
+        const nextViewFolders = viewFolders.map((vf) => {
+          if (addVfSet.has(vf.id)) {
+            const nextBookIds = Array.from(new Set([...vf.bookIds, ...targetIds]));
+            const updated: ViewFolderRecord = {...vf, bookIds: nextBookIds};
+            foldersToSave.push(updated);
+            return updated;
           }
+          if (removeVfSet.has(vf.id)) {
+            const nextBookIds = vf.bookIds.filter((id) => !targetIdSet.has(id));
+            const updated: ViewFolderRecord = {...vf, bookIds: nextBookIds};
+            foldersToSave.push(updated);
+            return updated;
+          }
+          return vf;
+        });
+
+        if (foldersToSave.length > 0) {
+          await Promise.all(foldersToSave.map((vf) => libraryDb.saveViewFolder(vf)));
+          setViewFolders(nextViewFolders);
         }
+      }
 
-        return {
-          ...book,
-          folderId: nextFolderId,
-          categoryId: nextCategoryId,
-          status: nextStatus,
-          progress: nextProgress,
-          tags: nextTags,
-        };
-      });
+      // 2. Update Book records
+      const needsBookUpdate =
+        patch.addSidebarFolderIds.length > 0 ||
+        patch.removeSidebarFolderIds.length > 0 ||
+        patch.addTags.length > 0 ||
+        patch.removeTags.length > 0 ||
+        patch.author !== undefined ||
+        patch.series !== undefined ||
+        patch.publisher !== undefined ||
+        patch.language !== undefined ||
+        patch.categoryAction !== 'keep' ||
+        patch.statusAction !== 'keep' ||
+        patch.favoriteAction !== 'keep' ||
+        patch.resetProgress;
 
-      await libraryDb.updateBooksBatch(updatedBooks);
-      const updatedMap = new Map(updatedBooks.map((b) => [b.id, b]));
-      setBooks((prev) => prev.map((b) => updatedMap.get(b.id) ?? b));
-      setBulkEditOpen(false);
-      notify(`Updated ${updatedBooks.length} books`, 'success');
+      if (needsBookUpdate) {
+        const removeTagLower = new Set(patch.removeTags.map((t) => t.toLowerCase()));
+        const removeSidebarSet = new Set(patch.removeSidebarFolderIds);
+
+        const updatedBooks = targetBooks.map((book) => {
+          let nextFolderIds = getBookFolderIds(book).filter((id) => !removeSidebarSet.has(id));
+          if (patch.addSidebarFolderIds.length > 0) {
+            nextFolderIds = [...nextFolderIds, ...patch.addSidebarFolderIds];
+          }
+
+          let nextCategoryId = book.categoryId;
+          if (patch.categoryAction === 'set') nextCategoryId = patch.categoryId;
+          if (patch.categoryAction === 'clear') nextCategoryId = null;
+
+          let nextStatus = book.status;
+          let nextProgress = book.progress;
+          let nextLocation = book.currentLocation;
+
+          if (patch.resetProgress) {
+            nextProgress = 0;
+            nextLocation = {unitIndex: book.format === 'pdf' ? 1 : 0, scrollRatio: 0};
+            if (patch.statusAction === 'keep') {
+              nextStatus = 'unread';
+            }
+          }
+
+          if (patch.statusAction !== 'keep') {
+            nextStatus = patch.statusAction;
+            if (nextStatus === 'finished') nextProgress = 100;
+            if (nextStatus === 'unread') nextProgress = 0;
+            if (nextStatus === 'reading' && nextProgress === 0) nextProgress = 1;
+          }
+
+          let nextFavorite = book.isFavorite;
+          if (patch.favoriteAction === 'favorite') nextFavorite = true;
+          if (patch.favoriteAction === 'unfavorite') nextFavorite = false;
+
+          const nextTags = book.tags.filter((t) => !removeTagLower.has(t.toLowerCase()));
+          for (const t of patch.addTags) {
+            if (!nextTags.some((e) => e.toLowerCase() === t.toLowerCase())) {
+              nextTags.push(t);
+            }
+          }
+
+          return withBookFolderIds(
+            {
+              ...book,
+              ...(patch.author !== undefined ? {author: patch.author} : {}),
+              ...(patch.series !== undefined ? {series: patch.series} : {}),
+              ...(patch.publisher !== undefined ? {publisher: patch.publisher} : {}),
+              ...(patch.language !== undefined ? {language: patch.language} : {}),
+              categoryId: nextCategoryId,
+              status: nextStatus,
+              progress: nextProgress,
+              currentLocation: nextLocation,
+              isFavorite: nextFavorite,
+              tags: nextTags,
+            },
+            nextFolderIds
+          );
+        });
+
+        await libraryDb.updateBooksBatch(updatedBooks);
+        const updatedMap = new Map(updatedBooks.map((b) => [b.id, b]));
+        setBooks((prev) => prev.map((b) => updatedMap.get(b.id) ?? b));
+      }
+
+      setBulkEditTargetIds(null);
+      notify(
+        targetBooks.length === 1
+          ? `Updated "${targetBooks[0].title}"`
+          : `Updated ${targetBooks.length} books`,
+        'success'
+      );
     },
-    [books, selectedIds, notify]
+    [books, viewFolders, bulkEditTargetIds, notify]
+  );
+
+  // Right-click Context Menu Handlers (single book or full active selection)
+  const handleOpenBookContextMenu = useCallback(
+    (book: BookRecord, e: React.MouseEvent) => {
+      const targetBookIds =
+        selectedIds.has(book.id) && selectedIds.size > 1
+          ? Array.from(selectedIds)
+          : [book.id];
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        targetBookIds,
+        primaryBookId: book.id,
+      });
+    },
+    [selectedIds]
+  );
+
+  const handleContextToggleViewFolder = useCallback(
+    async (bookIds: string[], folderId: string, add: boolean) => {
+      const target = viewFolders.find((vf) => vf.id === folderId);
+      if (!target) return;
+      const idSet = new Set(bookIds);
+      const nextBookIds = add
+        ? Array.from(new Set([...target.bookIds, ...bookIds]))
+        : target.bookIds.filter((id) => !idSet.has(id));
+      const updated: ViewFolderRecord = {...target, bookIds: nextBookIds};
+      await libraryDb.saveViewFolder(updated);
+      setViewFolders((prev) => prev.map((vf) => (vf.id === folderId ? updated : vf)));
+      notify(
+        add
+          ? bookIds.length === 1
+            ? `Added book to "${target.name}"`
+            : `Added ${bookIds.length} books to "${target.name}"`
+          : bookIds.length === 1
+            ? `Removed book from "${target.name}"`
+            : `Removed ${bookIds.length} books from "${target.name}"`,
+        add ? 'success' : 'info'
+      );
+    },
+    [viewFolders, notify]
+  );
+
+  const handleContextToggleSidebarFolder = useCallback(
+    async (bookIds: string[], folderId: string, add: boolean) => {
+      const folder = folders.find((f) => f.id === folderId);
+      if (!folder) return;
+      const idSet = new Set(bookIds);
+      const targets = books.filter((b) => idSet.has(b.id));
+      if (targets.length === 0) return;
+
+      const updated = targets.map((b) => {
+        const current = getBookFolderIds(b);
+        const nextIds = add
+          ? [...current, folderId]
+          : current.filter((fid) => fid !== folderId);
+        return withBookFolderIds(b, nextIds);
+      });
+      await libraryDb.updateBooksBatch(updated);
+      const updatedMap = new Map(updated.map((b) => [b.id, b]));
+      setBooks((prev) => prev.map((b) => updatedMap.get(b.id) ?? b));
+      notify(
+        add
+          ? updated.length === 1
+            ? `Added "${updated[0].title}" to "${folder.name}"`
+            : `Added ${updated.length} books to "${folder.name}"`
+          : updated.length === 1
+            ? `Removed "${updated[0].title}" from "${folder.name}"`
+            : `Removed ${updated.length} books from "${folder.name}"`,
+        add ? 'success' : 'info'
+      );
+    },
+    [books, folders, notify]
+  );
+
+  const handleContextCreateViewFolderAndAssign = useCallback(
+    async (name: string, bookIds: string[]) => {
+      const created = await handleCreateViewFolder(name);
+      if (!created || bookIds.length === 0) return;
+      const updated: ViewFolderRecord = {
+        ...created,
+        bookIds: Array.from(new Set(bookIds)),
+      };
+      await libraryDb.saveViewFolder(updated);
+      setViewFolders((prev) => prev.map((vf) => (vf.id === updated.id ? updated : vf)));
+    },
+    [handleCreateViewFolder]
+  );
+
+  const handleContextCreateSidebarFolderAndAssign = useCallback(
+    async (name: string, bookIds: string[]) => {
+      const created = await handleCreateFolder(name);
+      if (!created || bookIds.length === 0) return;
+      const idSet = new Set(bookIds);
+      const targets = books.filter((b) => idSet.has(b.id));
+      if (targets.length === 0) return;
+      const updated = targets.map((b) => withBookFolderIds(b, [...getBookFolderIds(b), created.id]));
+      await libraryDb.updateBooksBatch(updated);
+      const updatedMap = new Map(updated.map((b) => [b.id, b]));
+      setBooks((prev) => prev.map((b) => updatedMap.get(b.id) ?? b));
+    },
+    [handleCreateFolder, books]
+  );
+
+  const handleContextSetReadingStatus = useCallback(
+    async (bookIds: string[], status: ReadingStatus) => {
+      const idSet = new Set(bookIds);
+      const targets = books.filter((b) => idSet.has(b.id));
+      if (targets.length === 0) return;
+      const updated = targets.map((b) => {
+        const nextProgress =
+          status === 'finished' ? 100 : status === 'unread' ? 0 : Math.max(1, b.progress);
+        return {...b, status, progress: nextProgress};
+      });
+      await libraryDb.updateBooksBatch(updated);
+      const updatedMap = new Map(updated.map((b) => [b.id, b]));
+      setBooks((prev) => prev.map((b) => updatedMap.get(b.id) ?? b));
+      const label =
+        status === 'finished' ? 'Finished' : status === 'reading' ? 'Currently Reading' : 'Unread';
+      notify(
+        updated.length === 1
+          ? `Marked "${updated[0].title}" as ${label}`
+          : `Marked ${updated.length} books as ${label}`,
+        'success'
+      );
+    },
+    [books, notify]
+  );
+
+  const handleContextSetFavorite = useCallback(
+    async (bookIds: string[], favorite: boolean) => {
+      const idSet = new Set(bookIds);
+      const targets = books.filter((b) => idSet.has(b.id) && b.isFavorite !== favorite);
+      if (targets.length === 0) return;
+      const updated = targets.map((b) => ({...b, isFavorite: favorite}));
+      await libraryDb.updateBooksBatch(updated);
+      const updatedMap = new Map(updated.map((b) => [b.id, b]));
+      setBooks((prev) => prev.map((b) => updatedMap.get(b.id) ?? b));
+      notify(
+        favorite
+          ? updated.length === 1
+            ? `Added "${updated[0].title}" to Favorites`
+            : `Added ${updated.length} books to Favorites`
+          : updated.length === 1
+            ? `Removed "${updated[0].title}" from Favorites`
+            : `Removed ${updated.length} books from Favorites`,
+        'success'
+      );
+    },
+    [books, notify]
   );
 
   // Mobile Organize & Move sheet apply (1 or N books)
@@ -1376,22 +1898,22 @@ export default function App() {
         setViewFolders(nextViewFolders);
       }
 
-      // 2. Update books (Sidebar folder, Category, Tags)
+      // 2. Update books (Sidebar folders, Category, Tags)
       const needsBookUpdate =
-        payload.sidebarFolderChange.mode !== 'keep' ||
+        payload.addToSidebarFolderIds.length > 0 ||
+        payload.removeFromSidebarFolderIds.length > 0 ||
         payload.categoryChange.mode !== 'keep' ||
         payload.addTags.length > 0 ||
         payload.removeTags.length > 0;
 
       if (needsBookUpdate) {
         const removeTagLower = new Set(payload.removeTags.map((t) => t.toLowerCase()));
+        const removeSidebarSet = new Set(payload.removeFromSidebarFolderIds);
         const targets = books.filter((b) => bookIdSet.has(b.id));
         const updatedBooks = targets.map((book) => {
-          let nextFolderId = book.folderId;
-          if (payload.sidebarFolderChange.mode === 'set') {
-            nextFolderId = payload.sidebarFolderChange.folderId;
-          } else if (payload.sidebarFolderChange.mode === 'clear') {
-            nextFolderId = null;
+          let nextFolderIds = getBookFolderIds(book).filter((id) => !removeSidebarSet.has(id));
+          if (payload.addToSidebarFolderIds.length > 0) {
+            nextFolderIds = [...nextFolderIds, ...payload.addToSidebarFolderIds];
           }
 
           let nextCategoryId = book.categoryId;
@@ -1408,12 +1930,14 @@ export default function App() {
             }
           }
 
-          return {
-            ...book,
-            folderId: nextFolderId,
-            categoryId: nextCategoryId,
-            tags: nextTags,
-          };
+          return withBookFolderIds(
+            {
+              ...book,
+              categoryId: nextCategoryId,
+              tags: nextTags,
+            },
+            nextFolderIds
+          );
         });
 
         await libraryDb.updateBooksBatch(updatedBooks);
@@ -1451,9 +1975,9 @@ export default function App() {
     );
   }, [books, selectedIds, notify]);
 
-  // Bulk Delete confirm
-  const handleConfirmBulkDelete = useCallback(async () => {
-    const ids = Array.from(selectedIds);
+  // Confirmed Delete (used by both Bulk Delete and Right-Click Context Menu Delete)
+  const handleConfirmDeleteBooks = useCallback(async () => {
+    const ids = pendingDeleteBookIds ?? [];
     if (ids.length === 0) return;
     await libraryDb.deleteBooks(ids);
     const idSet = new Set(ids);
@@ -1470,15 +1994,20 @@ export default function App() {
     setOpenBookIds((prev) => prev.filter((id) => !idSet.has(id)));
     setReadingBookId((curr) => (curr && idSet.has(curr) ? null : curr));
     setInspectedBookId((curr) => (curr && idSet.has(curr) ? null : curr));
-    setBulkDeleteOpen(false);
-    handleClearSelection();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      if (next.size === 0) setIsSelectionMode(false);
+      return next;
+    });
+    setPendingDeleteBookIds(null);
     notify(
       ids.length === 1
         ? 'Deleted 1 book from local storage'
         : `Deleted ${ids.length} books from local storage`,
       'info'
     );
-  }, [selectedIds, handleClearSelection, notify]);
+  }, [pendingDeleteBookIds, notify]);
 
   // Sort handler
   const handleSortFieldClick = (field: SortField) => {
@@ -1578,10 +2107,17 @@ export default function App() {
     [allBookmarks, inspectedBook]
   );
 
-  const selectedBookRecords = useMemo(
-    () => books.filter((b) => selectedIds.has(b.id)),
-    [books, selectedIds]
-  );
+  const bulkEditTargetBooks = useMemo(() => {
+    if (!bulkEditTargetIds || bulkEditTargetIds.length === 0) return [];
+    const idSet = new Set(bulkEditTargetIds);
+    return books.filter((b) => idSet.has(b.id));
+  }, [books, bulkEditTargetIds]);
+
+  const pendingDeleteBookRecords = useMemo(() => {
+    if (!pendingDeleteBookIds || pendingDeleteBookIds.length === 0) return [];
+    const idSet = new Set(pendingDeleteBookIds);
+    return books.filter((b) => idSet.has(b.id));
+  }, [books, pendingDeleteBookIds]);
 
   const quickActionBook = useMemo(
     () => (quickActionBookId ? books.find((b) => b.id === quickActionBookId) ?? null : null),
@@ -2150,7 +2686,47 @@ export default function App() {
           )}
 
           {/* Library Content Viewport */}
-          <main className="flex-1 overflow-y-auto flex flex-col">
+          <main
+            ref={libraryMainRef}
+            onScroll={() => {
+              if (contextMenu) setContextMenu(null);
+            }}
+            className="flex-1 overflow-y-auto flex flex-col relative"
+          >
+            {/* Scroll-Aware Floating Folder Drop Dock (appears while dragging past top folders) */}
+            {!isHydrating && !isHighlightsHubActive && books.length > 0 && (
+              <FloatingFolderDropDock
+                visible={isDraggingBook && isFoldersOutOfView}
+                activeViewLabel={activeViewLabel}
+                currentViewFolders={activeDrilledFolder ? [] : currentViewFolders}
+                sidebarFolders={folders}
+                activeFolderRemovalTarget={
+                  activeDrilledFolder
+                    ? {kind: 'view', id: activeDrilledFolder.id, name: activeDrilledFolder.name}
+                    : activeSidebarFolder
+                      ? {
+                          kind: 'sidebar',
+                          id: activeSidebarFolder.id,
+                          name: activeSidebarFolder.name,
+                        }
+                      : null
+                }
+                onDropToViewFolder={(bookIds, folderId) =>
+                  void handleDropBooksToViewFolder(bookIds, folderId)
+                }
+                onDropToSidebarFolder={(bookIds, folderId) =>
+                  void handleDropBooksToFolder(bookIds, folderId)
+                }
+                onDropToRemoveFromCurrentFolder={(bookIds) => {
+                  if (activeDrilledFolder) {
+                    void handleRemoveBooksFromViewFolder(bookIds, activeDrilledFolder.id);
+                  } else if (activeSidebarFolder) {
+                    void handleRemoveBooksFromSidebarFolder(bookIds, activeSidebarFolder.id);
+                  }
+                }}
+              />
+            )}
+
             {isHydrating ? (
               <div className="flex-1 flex items-center justify-center p-12">
                 <div className="flex items-center gap-3 text-xs text-[var(--text-secondary)]">
@@ -2192,7 +2768,8 @@ export default function App() {
                   />
                 )}
 
-                {/* Drilled-In View Folder Breadcrumb Header OR Per-View Folders Section */}
+                {/* Drilled-In View Folder Breadcrumb Header OR Sidebar Folder Breadcrumb + Per-View Folders Section */}
+                <div ref={foldersSentinelRef}>
                 {activeDrilledFolder ? (
                   <div className="mb-6 pb-4 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5 min-w-0">
@@ -2202,10 +2779,40 @@ export default function App() {
                           setActiveViewFolderId(null);
                           setIsRenamingDrilledFolder(false);
                         }}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer shrink-0"
+                        onDragOver={(e) => {
+                          if (hasBookDragPayload(e.dataTransfer)) {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'move';
+                            setIsBackBreadcrumbDragOver(true);
+                          }
+                        }}
+                        onDragLeave={() => setIsBackBreadcrumbDragOver(false)}
+                        onDrop={(e) => {
+                          const ids = extractDraggedBookIds(e.dataTransfer);
+                          if (ids.length > 0) {
+                            e.preventDefault();
+                            void handleRemoveBooksFromViewFolder(ids, activeDrilledFolder.id);
+                          }
+                          setIsBackBreadcrumbDragOver(false);
+                          setIsDraggingBook(false);
+                        }}
+                        title={`Click to go back, or drop a book here to remove it from "${activeDrilledFolder.name}"`}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
+                          isBackBreadcrumbDragOver
+                            ? 'border-[var(--accent)] ring-2 ring-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)]'
+                            : isDraggingBook
+                              ? 'border-dashed border-[var(--accent)] bg-[var(--bg-accent-subtle)]/60 text-[var(--accent)]'
+                              : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
+                        }`}
                       >
-                        <ArrowLeft className="w-3.5 h-3.5" />
-                        <span>Back to {activeViewLabel}</span>
+                        <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+                        <span>
+                          {isBackBreadcrumbDragOver
+                            ? `Drop to remove from "${activeDrilledFolder.name}"`
+                            : isDraggingBook
+                              ? `Drop here to remove from folder`
+                              : `Back to ${activeViewLabel}`}
+                        </span>
                       </button>
 
                       <span className="text-xs text-[var(--text-muted)]">/</span>
@@ -2291,38 +2898,117 @@ export default function App() {
                     </div>
                   </div>
                 ) : (
-                  <ViewFoldersSection
-                    viewLabel={activeViewLabel}
-                    viewFolders={currentViewFolders}
-                    viewBooks={visibleBooks}
-                    displayMode={viewFolderDisplayMode}
-                    hideFiledBooks={hideFiledBooksInView}
-                    filedBooksCount={filedBookIdsInView.size}
-                    coverSize={libraryPrefs.coverSize}
-                    inspectorOpen={libraryPrefs.inspectorOpen}
-                    inspectedBookId={inspectedBook?.id ?? null}
-                    onDisplayModeChange={(mode) => setViewFolderDisplay(activeViewKey, mode)}
-                    onToggleHideFiled={() =>
-                      setHideFiledBooks(activeViewKey, !hideFiledBooksInView)
-                    }
-                    onCreateFolder={(name) => void handleCreateViewFolder(name)}
-                    onRenameFolder={(folderId, name) => void handleRenameViewFolder(folderId, name)}
-                    onDeleteFolder={(folderId) => void handleDeleteViewFolder(folderId)}
-                    onOpenFolder={(folderId) => {
-                      setActiveViewFolderId(folderId);
-                      setSelectedIds(new Set());
-                    }}
-                    onRequestAddBooks={(folder) => setAddBooksFolderId(folder.id)}
-                    onDropBooksToViewFolder={(bookIds, folderId) =>
-                      void handleDropBooksToViewFolder(bookIds, folderId)
-                    }
-                    onRemoveBookFromViewFolder={(bookId, folderId) =>
-                      void handleRemoveBookFromViewFolder(bookId, folderId)
-                    }
-                    onOpenBook={(book) => void openBookInTab(book.id)}
-                    onInspectBook={handleInspectBook}
-                  />
+                  <>
+                    {/* Active Sidebar Folder Back Breadcrumb (supports drag-to-remove single book) */}
+                    {activeSidebarFolder && (
+                      <div className="mb-6 pb-4 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (activeSidebarParentFolder) {
+                                setActiveFilter({kind: 'folder', id: activeSidebarParentFolder.id});
+                              } else {
+                                setActiveFilter({kind: 'smart', id: 'all'});
+                              }
+                            }}
+                            onDragOver={(e) => {
+                              if (hasBookDragPayload(e.dataTransfer)) {
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = 'move';
+                                setIsBackBreadcrumbDragOver(true);
+                              }
+                            }}
+                            onDragLeave={() => setIsBackBreadcrumbDragOver(false)}
+                            onDrop={(e) => {
+                              const ids = extractDraggedBookIds(e.dataTransfer);
+                              if (ids.length > 0) {
+                                e.preventDefault();
+                                void handleRemoveBooksFromSidebarFolder(ids, activeSidebarFolder.id);
+                              }
+                              setIsBackBreadcrumbDragOver(false);
+                              setIsDraggingBook(false);
+                            }}
+                            title={`Click to go back, or drop a book here to remove it from "${activeSidebarFolder.name}"`}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
+                              isBackBreadcrumbDragOver
+                                ? 'border-[var(--accent)] ring-2 ring-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)]'
+                                : isDraggingBook
+                                  ? 'border-dashed border-[var(--accent)] bg-[var(--bg-accent-subtle)]/60 text-[var(--accent)]'
+                                  : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
+                            }`}
+                          >
+                            <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+                            <span>
+                              {isBackBreadcrumbDragOver
+                                ? `Drop to remove from "${activeSidebarFolder.name}"`
+                                : isDraggingBook
+                                  ? `Drop here to remove from folder`
+                                  : activeSidebarParentFolder
+                                    ? `Back to ${activeSidebarParentFolder.name}`
+                                    : 'Back to All Books'}
+                            </span>
+                          </button>
+
+                          <span className="text-xs text-[var(--text-muted)]">/</span>
+
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Folder
+                              className="w-4 h-4 shrink-0"
+                              style={{
+                                color:
+                                  getFolderColorHex(activeSidebarFolder.color) ?? 'var(--accent)',
+                              }}
+                            />
+                            <h2 className="font-serif-editorial text-lg font-semibold text-[var(--text-primary)] truncate">
+                              {activeSidebarFolder.name}
+                            </h2>
+                            <span className="font-mono-tabular text-xs text-[var(--text-muted)] shrink-0">
+                              {visibleBooks.length}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <ViewFoldersSection
+                      viewLabel={activeViewLabel}
+                      viewFolders={currentViewFolders}
+                      viewBooks={visibleBooks}
+                      displayMode={viewFolderDisplayMode}
+                      cardLayout={viewFolderCardLayout}
+                      hideFiledBooks={hideFiledBooksInView}
+                      filedBooksCount={filedBookIdsInView.size}
+                      coverSize={libraryPrefs.coverSize}
+                      inspectorOpen={libraryPrefs.inspectorOpen}
+                      inspectedBookId={inspectedBook?.id ?? null}
+                      onDisplayModeChange={(mode) => setViewFolderDisplay(activeViewKey, mode)}
+                      onCardLayoutChange={(layout) => setViewFolderCardLayout(activeViewKey, layout)}
+                      onToggleHideFiled={() =>
+                        setHideFiledBooks(activeViewKey, !hideFiledBooksInView)
+                      }
+                      onCreateFolder={(name) => void handleCreateViewFolder(name)}
+                      onRenameFolder={(folderId, name) =>
+                        void handleRenameViewFolder(folderId, name)
+                      }
+                      onDeleteFolder={(folderId) => void handleDeleteViewFolder(folderId)}
+                      onOpenFolder={(folderId) => {
+                        setActiveViewFolderId(folderId);
+                        setSelectedIds(new Set());
+                      }}
+                      onRequestAddBooks={(folder) => setAddBooksFolderId(folder.id)}
+                      onDropBooksToViewFolder={(bookIds, folderId) =>
+                        void handleDropBooksToViewFolder(bookIds, folderId)
+                      }
+                      onRemoveBookFromViewFolder={(bookId, folderId) =>
+                        void handleRemoveBookFromViewFolder(bookId, folderId)
+                      }
+                      onOpenBook={(book) => void openBookInTab(book.id)}
+                      onInspectBook={handleInspectBook}
+                    />
+                  </>
                 )}
+                </div>
 
                 {/* Main Catalog Area (Ungrouped Books or Drilled-In Folder Books) */}
                 {activeDrilledFolder && displayedBooks.length === 0 ? (
@@ -2451,6 +3137,7 @@ export default function App() {
                                 onToggleFavorite={(book) => void handleToggleFavorite(book)}
                                 onToggleSelect={handleToggleSelect}
                                 onQuickAction={(book) => setQuickActionBookId(book.id)}
+                                onContextMenuBook={handleOpenBookContextMenu}
                                 onRemoveFromFolder={
                                   activeDrilledFolder
                                     ? (book) =>
@@ -2492,6 +3179,7 @@ export default function App() {
                                     onInspectBook={handleInspectBook}
                                     onEditBook={(book) => setEditingBookId(book.id)}
                                     onToggleFavorite={(book) => void handleToggleFavorite(book)}
+                                    onContextMenuBook={handleOpenBookContextMenu}
                                   />
                                 </div>
                               </>
@@ -2546,10 +3234,10 @@ export default function App() {
           totalVisibleCount={displayedBooks.length}
           onSelectAll={() => setSelectedIds(new Set(displayedBooks.map((b) => b.id)))}
           onClearSelection={handleClearSelection}
-          onBulkEdit={() => setBulkEditOpen(true)}
+          onBulkEdit={() => setBulkEditTargetIds(Array.from(selectedIds))}
           onMobileOrganize={() => setMobileOrganizeBookIds(Array.from(selectedIds))}
           onBulkFavorite={() => void handleBulkFavorite()}
-          onBulkDelete={() => setBulkDeleteOpen(true)}
+          onBulkDelete={() => setPendingDeleteBookIds(Array.from(selectedIds))}
         />
       )}
 
@@ -2618,7 +3306,7 @@ export default function App() {
       {/* Mobile Per-Book Quick Action Sheet */}
       <MobileBookActionSheet
         book={quickActionBook}
-        activeDrilledFolderName={activeDrilledFolder?.name ?? null}
+        activeDrilledFolderName={activeDrilledFolder?.name ?? activeSidebarFolder?.name ?? null}
         onClose={() => setQuickActionBookId(null)}
         onReadBook={(book) => void openBookInTab(book.id)}
         onInspectBook={handleInspectBook}
@@ -2632,7 +3320,9 @@ export default function App() {
         onRemoveFromViewFolder={
           activeDrilledFolder
             ? (book) => void handleRemoveBookFromViewFolder(book.id, activeDrilledFolder.id)
-            : undefined
+            : activeSidebarFolder
+              ? (book) => void handleRemoveBooksFromSidebarFolder([book.id], activeSidebarFolder.id)
+              : undefined
         }
         onDeleteBook={(id) => void handleDeleteSingleBook(id)}
       />
@@ -2696,24 +3386,28 @@ export default function App() {
         />
       )}
 
-      {/* Bulk Edit Modal */}
-      {bulkEditOpen && (
+      {/* Redesigned Two-Column Bulk Edit Studio Modal */}
+      {bulkEditTargetBooks.length > 0 && (
         <BulkEditModal
-          selectedCount={selectedIds.size}
+          selectedBooks={bulkEditTargetBooks}
+          activeViewLabel={activeViewLabel}
+          currentViewFolders={currentViewFolders}
           folders={folders}
           categories={categories}
           existingTags={existingTagNames}
+          onCreateViewFolder={handleCreateViewFolder}
+          onCreateFolder={(name) => handleCreateFolder(name)}
           onApply={(patch) => void handleApplyBulkEdit(patch)}
-          onClose={() => setBulkEditOpen(false)}
+          onClose={() => setBulkEditTargetIds(null)}
         />
       )}
 
-      {/* Bulk Delete Confirmation Modal */}
-      {bulkDeleteOpen && selectedBookRecords.length > 0 && (
+      {/* Delete Confirmation Modal (Bulk & Context Menu) */}
+      {pendingDeleteBookRecords.length > 0 && (
         <ConfirmDeleteModal
-          booksToDelete={selectedBookRecords}
-          onConfirm={() => void handleConfirmBulkDelete()}
-          onClose={() => setBulkDeleteOpen(false)}
+          booksToDelete={pendingDeleteBookRecords}
+          onConfirm={() => void handleConfirmDeleteBooks()}
+          onClose={() => setPendingDeleteBookIds(null)}
         />
       )}
 
@@ -2739,6 +3433,72 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Folder Drag-and-Drop Add vs. Move Confirmation Modal */}
+      <FolderDropActionModal
+        pendingDrop={pendingFolderDrop}
+        onAdd={() => {
+          if (!pendingFolderDrop) return;
+          const drop = pendingFolderDrop;
+          setPendingFolderDrop(null);
+          if (drop.kind === 'sidebar') {
+            void executeDropToSidebarFolder(drop.bookIds, drop.targetFolderId, 'add');
+          } else {
+            void executeDropToViewFolder(drop.bookIds, drop.targetFolderId, 'add');
+          }
+        }}
+        onMove={() => {
+          if (!pendingFolderDrop) return;
+          const drop = pendingFolderDrop;
+          setPendingFolderDrop(null);
+          if (drop.kind === 'sidebar') {
+            void executeDropToSidebarFolder(drop.bookIds, drop.targetFolderId, 'move');
+          } else {
+            void executeDropToViewFolder(drop.bookIds, drop.targetFolderId, 'move');
+          }
+        }}
+        onCancel={() => setPendingFolderDrop(null)}
+      />
+
+      {/* Right-Click Context Menu for Book Cards & Table Rows */}
+      <BookContextMenu
+        menuState={contextMenu}
+        books={books}
+        activeViewLabel={activeViewLabel}
+        currentViewFolders={currentViewFolders}
+        sidebarFolders={folders}
+        activeFolderRemovalName={activeDrilledFolder?.name ?? activeSidebarFolder?.name ?? null}
+        selectedIds={selectedIds}
+        onClose={() => setContextMenu(null)}
+        onOpenBook={(book) => void openBookInTab(book.id)}
+        onInspectBook={handleInspectBook}
+        onEditMetadata={(book) => setEditingBookId(book.id)}
+        onBulkEditBooks={(bookIds) => setBulkEditTargetIds(bookIds)}
+        onOrganizeBooks={(bookIds) => setMobileOrganizeBookIds(bookIds)}
+        onToggleViewFolderMembership={(bookIds, folderId, add) =>
+          void handleContextToggleViewFolder(bookIds, folderId, add)
+        }
+        onToggleSidebarFolderMembership={(bookIds, folderId, add) =>
+          void handleContextToggleSidebarFolder(bookIds, folderId, add)
+        }
+        onCreateViewFolderAndAssign={handleContextCreateViewFolderAndAssign}
+        onCreateSidebarFolderAndAssign={handleContextCreateSidebarFolderAndAssign}
+        onRemoveFromCurrentFolder={
+          activeDrilledFolder
+            ? (bookIds) => void handleRemoveBooksFromViewFolder(bookIds, activeDrilledFolder.id)
+            : activeSidebarFolder
+              ? (bookIds) =>
+                  void handleRemoveBooksFromSidebarFolder(bookIds, activeSidebarFolder.id)
+              : undefined
+        }
+        onSetReadingStatus={(bookIds, status) =>
+          void handleContextSetReadingStatus(bookIds, status)
+        }
+        onSetFavorite={(bookIds, favorite) => void handleContextSetFavorite(bookIds, favorite)}
+        onToggleSelectBook={(bookId) => handleToggleSelect(bookId, false)}
+        onClearSelection={handleClearSelection}
+        onRequestDeleteBooks={(bookIds) => setPendingDeleteBookIds(bookIds)}
+      />
 
       <OfflineIndicator />
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />

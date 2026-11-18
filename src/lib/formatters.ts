@@ -1,4 +1,10 @@
-import type {CoverStyle, FolderColor, FolderRecord, HighlightColor} from '../types/library';
+import type {
+  BookRecord,
+  CoverStyle,
+  FolderColor,
+  FolderRecord,
+  HighlightColor,
+} from '../types/library';
 
 export function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB';
@@ -140,6 +146,46 @@ export function getFolderDescendantIds(folders: FolderRecord[], rootFolderId: st
     }
   }
   return result;
+}
+
+export function getBookFolderIds(book: Pick<BookRecord, 'folderId' | 'folderIds'>): string[] {
+  if (Array.isArray(book.folderIds)) {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const id of book.folderIds) {
+      if (typeof id === 'string' && id.trim() && !seen.has(id)) {
+        seen.add(id);
+        out.push(id);
+      }
+    }
+    return out;
+  }
+  return book.folderId ? [book.folderId] : [];
+}
+
+export function withBookFolderIds<T extends Pick<BookRecord, 'folderId' | 'folderIds'>>(
+  book: T,
+  folderIds: string[]
+): T {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const id of folderIds) {
+    if (typeof id === 'string' && id.trim() && !seen.has(id)) {
+      seen.add(id);
+      unique.push(id);
+    }
+  }
+  return {
+    ...book,
+    folderIds: unique,
+    folderId: unique[0] ?? null,
+  };
+}
+
+export function normalizeBookFolders<T extends Pick<BookRecord, 'folderId' | 'folderIds'>>(
+  book: T
+): T {
+  return withBookFolderIds(book, getBookFolderIds(book));
 }
 
 export async function compressCoverImageToDataUrl(file: File): Promise<string> {

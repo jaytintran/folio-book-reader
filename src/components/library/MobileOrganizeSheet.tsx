@@ -1,6 +1,10 @@
 import {Check, Folder, FolderPlus, Plus, Tag} from 'lucide-react';
 import React, {useEffect, useMemo, useState} from 'react';
-import {flattenFoldersHierarchy, getFolderColorHex} from '../../lib/formatters';
+import {
+  flattenFoldersHierarchy,
+  getBookFolderIds,
+  getFolderColorHex,
+} from '../../lib/formatters';
 import type {
   BookRecord,
   CategoryRecord,
@@ -13,7 +17,8 @@ export interface MobileOrganizePayload {
   bookIds: string[];
   addToViewFolderIds: string[];
   removeFromViewFolderIds: string[];
-  sidebarFolderChange: {mode: 'keep' | 'set' | 'clear'; folderId: string | null};
+  addToSidebarFolderIds: string[];
+  removeFromSidebarFolderIds: string[];
   categoryChange: {mode: 'keep' | 'set' | 'clear'; categoryId: string | null};
   addTags: string[];
   removeTags: string[];
@@ -54,9 +59,9 @@ export const MobileOrganizeSheet: React.FC<MobileOrganizeSheetProps> = ({
   const [newViewFolderName, setNewViewFolderName] = useState('');
   const [creatingViewFolder, setCreatingViewFolder] = useState(false);
 
-  // Global Sidebar Folder & Category
-  const [sidebarFolderMode, setSidebarFolderMode] = useState<'keep' | 'set' | 'clear'>('keep');
-  const [selectedSidebarFolderId, setSelectedSidebarFolderId] = useState<string | null>(null);
+  // Global Sidebar Folder multi-select membership toggles
+  const [selectedSidebarFolderIds, setSelectedSidebarFolderIds] = useState<Set<string>>(new Set());
+  const [initialSidebarFolderIds, setInitialSidebarFolderIds] = useState<Set<string>>(new Set());
 
   const [categoryMode, setCategoryMode] = useState<'keep' | 'set' | 'clear'>('keep');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -86,14 +91,16 @@ export const MobileOrganizeSheet: React.FC<MobileOrganizeSheetProps> = ({
     setInitialViewFolderIds(initialVf);
     setSelectedViewFolderIds(new Set(initialVf));
 
-    if (singleBook) {
-      if (singleBook.folderId) {
-        setSidebarFolderMode('set');
-        setSelectedSidebarFolderId(singleBook.folderId);
-      } else {
-        setSidebarFolderMode('clear');
-        setSelectedSidebarFolderId(null);
+    const initialSf = new Set<string>();
+    for (const sf of sidebarFolders) {
+      if (targetBooks.every((b) => getBookFolderIds(b).includes(sf.id))) {
+        initialSf.add(sf.id);
       }
+    }
+    setInitialSidebarFolderIds(initialSf);
+    setSelectedSidebarFolderIds(new Set(initialSf));
+
+    if (singleBook) {
       if (singleBook.categoryId) {
         setCategoryMode('set');
         setSelectedCategoryId(singleBook.categoryId);
@@ -102,8 +109,6 @@ export const MobileOrganizeSheet: React.FC<MobileOrganizeSheetProps> = ({
         setSelectedCategoryId(null);
       }
     } else {
-      setSidebarFolderMode('keep');
-      setSelectedSidebarFolderId(null);
       setCategoryMode('keep');
       setSelectedCategoryId(null);
     }
@@ -118,6 +123,15 @@ export const MobileOrganizeSheet: React.FC<MobileOrganizeSheetProps> = ({
 
   const toggleViewFolder = (folderId: string) => {
     setSelectedViewFolderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      return next;
+    });
+  };
+
+  const toggleSidebarFolder = (folderId: string) => {
+    setSelectedSidebarFolderIds((prev) => {
       const next = new Set(prev);
       if (next.has(folderId)) next.delete(folderId);
       else next.add(folderId);
@@ -196,11 +210,21 @@ export const MobileOrganizeSheet: React.FC<MobileOrganizeSheetProps> = ({
       if (!nowSelected && wasSelected) removeFromViewFolderIds.push(vf.id);
     }
 
+    const addToSidebarFolderIds: string[] = [];
+    const removeFromSidebarFolderIds: string[] = [];
+    for (const sf of sidebarFolders) {
+      const nowSelected = selectedSidebarFolderIds.has(sf.id);
+      const wasSelected = initialSidebarFolderIds.has(sf.id);
+      if (nowSelected && !wasSelected) addToSidebarFolderIds.push(sf.id);
+      if (!nowSelected && wasSelected) removeFromSidebarFolderIds.push(sf.id);
+    }
+
     await onApply({
       bookIds: targetBookIds,
       addToViewFolderIds,
       removeFromViewFolderIds,
-      sidebarFolderChange: {mode: sidebarFolderMode, folderId: selectedSidebarFolderId},
+      addToSidebarFolderIds,
+      removeFromSidebarFolderIds,
       categoryChange: {mode: categoryMode, categoryId: selectedCategoryId},
       addTags: Array.from(tagsToAdd),
       removeTags: Array.from(tagsToRemove),
@@ -215,7 +239,7 @@ export const MobileOrganizeSheet: React.FC<MobileOrganizeSheetProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title={isSingle ? 'Organize Book' : `Organize ${targetBooks.length} Books`}
-      subtitle={singleBook ? singleBook.title : `File selected books into folders, categories, or tags`}
+      subtitle={singleBook ? singleBook.title : 'File selected books into folders, categories, or tags'}
       ariaLabel="Organize books"
       maxHeightClass="max-h-[88dvh]"
       footer={
@@ -310,66 +334,49 @@ export const MobileOrganizeSheet: React.FC<MobileOrganizeSheetProps> = ({
           )}
         </section>
 
-        {/* Global Sidebar Folder */}
+        {/* Global Sidebar Folders (Multi-Select) */}
         <section>
           <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-2">
-            Library Folder
+            Library Folders
           </p>
-          <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] divide-y divide-[var(--border-subtle)]">
-            {!isSingle && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSidebarFolderMode('keep');
-                  setSelectedSidebarFolderId(null);
-                }}
-                className="w-full min-h-[44px] px-3.5 flex items-center justify-between text-xs font-medium text-[var(--text-secondary)] cursor-pointer"
-              >
-                <span>Keep existing folders</span>
-                {sidebarFolderMode === 'keep' && (
-                  <Check className="w-4 h-4 text-[var(--accent)] shrink-0" />
-                )}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                setSidebarFolderMode('clear');
-                setSelectedSidebarFolderId(null);
-              }}
-              className="w-full min-h-[44px] px-3.5 flex items-center justify-between text-xs font-medium text-[var(--text-primary)] cursor-pointer"
-            >
-              <span>No Folder (Unfiled)</span>
-              {sidebarFolderMode === 'clear' && (
-                <Check className="w-4 h-4 text-[var(--accent)] shrink-0" />
-              )}
-            </button>
-            {flatSidebarFolders.map(({folder, pathLabel}) => {
-              const active = sidebarFolderMode === 'set' && selectedSidebarFolderId === folder.id;
-              return (
-                <button
-                  key={folder.id}
-                  type="button"
-                  onClick={() => {
-                    setSidebarFolderMode('set');
-                    setSelectedSidebarFolderId(folder.id);
-                  }}
-                  className="w-full min-h-[44px] px-3.5 flex items-center justify-between gap-2 text-left cursor-pointer active:bg-[var(--bg-surface-hover)]"
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <Folder
-                      className="w-3.5 h-3.5 shrink-0"
-                      style={{color: getFolderColorHex(folder.color) ?? 'var(--text-muted)'}}
-                    />
-                    <span className="text-xs font-medium text-[var(--text-primary)] truncate">
-                      {pathLabel}
+          {flatSidebarFolders.length === 0 ? (
+            <p className="text-xs text-[var(--text-muted)] py-1">
+              No library folders created yet.
+            </p>
+          ) : (
+            <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] divide-y divide-[var(--border-subtle)]">
+              {flatSidebarFolders.map(({folder, pathLabel}) => {
+                const checked = selectedSidebarFolderIds.has(folder.id);
+                return (
+                  <button
+                    key={folder.id}
+                    type="button"
+                    onClick={() => toggleSidebarFolder(folder.id)}
+                    className="w-full min-h-[46px] px-3.5 flex items-center justify-between gap-2 text-left cursor-pointer active:bg-[var(--bg-surface-hover)]"
+                  >
+                    <span className="flex items-center gap-2.5 min-w-0">
+                      <Folder
+                        className="w-4 h-4 shrink-0"
+                        style={{color: getFolderColorHex(folder.color) ?? 'var(--text-muted)'}}
+                      />
+                      <span className="text-xs font-medium text-[var(--text-primary)] truncate">
+                        {pathLabel}
+                      </span>
                     </span>
-                  </span>
-                  {active && <Check className="w-4 h-4 text-[var(--accent)] shrink-0" />}
-                </button>
-              );
-            })}
-          </div>
+                    <span
+                      className={`w-5 h-5 rounded flex items-center justify-center border shrink-0 ${
+                        checked
+                          ? 'bg-[var(--accent)] border-[var(--accent)] text-[var(--accent-contrast)]'
+                          : 'border-[var(--border-strong)] text-transparent'
+                      }`}
+                    >
+                      <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         {/* Category */}

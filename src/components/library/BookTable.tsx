@@ -1,6 +1,6 @@
 import {ArrowDown, ArrowUp, BookOpen, Check, Info, Pencil, Star} from 'lucide-react';
 import React, {useMemo} from 'react';
-import {flattenFoldersHierarchy, formatShortDate} from '../../lib/formatters';
+import {flattenFoldersHierarchy, formatShortDate, getBookFolderIds} from '../../lib/formatters';
 import type {
   BookRecord,
   CategoryRecord,
@@ -27,6 +27,7 @@ interface BookTableProps {
   onInspectBook: (book: BookRecord) => void;
   onEditBook: (book: BookRecord) => void;
   onToggleFavorite: (book: BookRecord) => void;
+  onContextMenuBook?: (book: BookRecord, e: React.MouseEvent) => void;
 }
 
 export const BookTable: React.FC<BookTableProps> = ({
@@ -46,6 +47,7 @@ export const BookTable: React.FC<BookTableProps> = ({
   onInspectBook,
   onEditBook,
   onToggleFavorite,
+  onContextMenuBook,
 }) => {
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
   const folderById = useMemo(
@@ -137,7 +139,10 @@ export const BookTable: React.FC<BookTableProps> = ({
             const isSelected = selectedIds.has(book.id);
             const isInspected = inspectorOpen && inspectedBookId === book.id;
             const category = book.categoryId ? categoryById.get(book.categoryId) || '—' : '—';
-            const folder = book.folderId ? folderById.get(book.folderId) || '—' : '—';
+            const folderNames = getBookFolderIds(book)
+              .map((id) => folderById.get(id))
+              .filter((name): name is string => Boolean(name));
+            const folder = folderNames.length > 0 ? folderNames.join(' · ') : '—';
 
             return (
               <tr
@@ -151,6 +156,11 @@ export const BookTable: React.FC<BookTableProps> = ({
                   e.dataTransfer.setData('application/x-folio-book-id', book.id);
                   e.dataTransfer.setData('application/x-folio-book-ids', JSON.stringify(dragIds));
                   e.dataTransfer.effectAllowed = 'move';
+                }}
+                onContextMenu={(e) => {
+                  if (!onContextMenuBook) return;
+                  e.preventDefault();
+                  onContextMenuBook(book, e);
                 }}
                 onClick={() => {
                   if (inspectorOpen) onInspectBook(book);
