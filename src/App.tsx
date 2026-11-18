@@ -61,6 +61,10 @@ import {OfflineIndicator} from './components/pwa/OfflineIndicator';
 import {ReaderTabStrip} from './components/reader/ReaderTabStrip';
 import {ReaderView} from './components/reader/ReaderView';
 import {ToastContainer} from './components/ui/ToastContainer';
+import {
+  requestPersistentLocalStorage,
+  useOfflineDesktopPWA,
+} from './hooks/useOfflineDesktopPWA';
 import {usePreferences} from './hooks/usePreferences';
 import {
   exportLibraryBackupZip,
@@ -528,9 +532,10 @@ export default function App() {
 
   // File Import Pipeline with Duplicate Detection
   const handleImportFiles = useCallback(
-    async (fileList: FileList | File[]) => {
+    async (fileList: FileList | File[]): Promise<BookRecord[]> => {
       const files = Array.from(fileList);
-      if (files.length === 0) return;
+      if (files.length === 0) return [];
+      void requestPersistentLocalStorage();
 
       setIsImporting(true);
       const imported: BookRecord[] = [];
@@ -618,9 +623,48 @@ export default function App() {
       }
 
       setIsImporting(false);
+      return imported;
     },
     [activeFilter, books, notify]
   );
+
+  // Desktop OS "Open With Folio" handler: open existing match or import & open single book directly
+  const handleFilesLaunchedFromOS = useCallback(
+    async (files: File[]) => {
+      if (files.length === 1) {
+        const file = files[0];
+        const existingMatch = books.find(
+          (b) =>
+            b.fileName.toLowerCase() === file.name.toLowerCase() &&
+            b.fileSize === file.size
+        );
+        if (existingMatch) {
+          setOpenBookIds((prev) =>
+            prev.includes(existingMatch.id) ? prev : [...prev, existingMatch.id]
+          );
+          setReadingBookId(existingMatch.id);
+          return;
+        }
+        const imported = await handleImportFiles([file]);
+        if (imported.length === 1) {
+          const openedId = imported[0].id;
+          setOpenBookIds((prev) => (prev.includes(openedId) ? prev : [...prev, openedId]));
+          setReadingBookId(openedId);
+        }
+        return;
+      }
+
+      await handleImportFiles(files);
+    },
+    [books, handleImportFiles]
+  );
+
+  // Offline Desktop PWA lifecycle: persistent storage, background update notices, & OS file launcher
+  useOfflineDesktopPWA({
+    isHydrating,
+    onFilesLaunchedFromOS: handleFilesLaunchedFromOS,
+    onNotify: notify,
+  });
 
   // Resolve pending duplicates
   const handleResolveDuplicates = useCallback(

@@ -2,7 +2,5 @@
   "name": "Folio",
   "description": "Offline-first desktop e-book reader and library manager with Sepia and Dark themes for PDF, EPUB, and MOBI collections.",
   "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
+  "majorCapabilities": []
 }

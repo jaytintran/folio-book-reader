@@ -5,9 +5,41 @@ import path from 'path';
 import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
 
+function stagePdfJsOfflineAssets(rootDir: string) {
+  const folders = ['cmaps', 'standard_fonts', 'wasm'] as const;
+  const srcBase = path.resolve(rootDir, 'node_modules/pdfjs-dist');
+  const destBase = path.resolve(rootDir, 'public/pdfjs');
+
+  for (const folder of folders) {
+    const srcDir = path.join(srcBase, folder);
+    const destDir = path.join(destBase, folder);
+    if (!fs.existsSync(srcDir)) continue;
+
+    // Skip copying if already staged with matching entry count
+    const srcFiles = fs.readdirSync(srcDir);
+    const alreadyStaged =
+      fs.existsSync(destDir) && fs.readdirSync(destDir).length >= srcFiles.length;
+    if (!alreadyStaged) {
+      fs.mkdirSync(destDir, {recursive: true});
+      fs.cpSync(srcDir, destDir, {recursive: true, force: true});
+    }
+  }
+}
+
 export default defineConfig(() => {
   return {
     plugins: [
+      // Stage PDF.js CMaps, standard fonts, and WASM decoders into public/pdfjs/
+      // so both dev server and production builds precache 100% of PDF decoding assets locally.
+      {
+        name: 'stage-pdfjs-offline-assets',
+        configResolved(config) {
+          stagePdfJsOfflineAssets(config.root);
+        },
+        buildStart() {
+          stagePdfJsOfflineAssets(__dirname);
+        },
+      },
       react(),
       tailwindcss(),
       VitePWA({
@@ -30,6 +62,20 @@ export default defineConfig(() => {
           display: 'standalone',
           start_url: '/',
           scope: '/',
+          launch_handler: {
+            client_mode: 'focus-existing',
+          },
+          file_handlers: [
+            {
+              action: '/',
+              accept: {
+                'application/epub+zip': ['.epub'],
+                'application/pdf': ['.pdf'],
+                'application/x-mobipocket-ebook': ['.mobi', '.prc'],
+                'application/octet-stream': ['.mobi'],
+              },
+            },
+          ],
           icons: [
             {
               src: '/pwa-192x192.png',
@@ -50,32 +96,27 @@ export default defineConfig(() => {
               purpose: 'maskable',
             },
           ],
-        },
+        } as Record<string, unknown>,
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,mjs}'],
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          // Precache complete app shell, local fonts, icons, PDF worker, CMaps, standard fonts & WASM on first load
+          globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,woff,woff2,bcmap,pfb,ttf,wasm}'],
+          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
+          navigateFallback: '/index.html',
+          navigateFallbackDenylist: [/^\/pdfjs\//, /^\/assets\//],
           runtimeCaching: [
             {
-              urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+              // Same-origin CacheFirst safety net for PDF decoders and static assets (also helps dev-mode SW)
+              urlPattern: ({sameOrigin, url}) =>
+                sameOrigin &&
+                (url.pathname.startsWith('/pdfjs/') || url.pathname.startsWith('/assets/')),
               handler: 'CacheFirst',
               options: {
-                cacheName: 'google-fonts-cache',
+                cacheName: 'folio-static-assets',
                 expiration: {
-                  maxEntries: 12,
-                  maxAgeSeconds: 60 * 60 * 24 * 365,
-                },
-                cacheableResponse: {
-                  statuses: [0, 200],
-                },
-              },
-            },
-            {
-              urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'gstatic-fonts-cache',
-                expiration: {
-                  maxEntries: 20,
+                  maxEntries: 320,
                   maxAgeSeconds: 60 * 60 * 24 * 365,
                 },
                 cacheableResponse: {

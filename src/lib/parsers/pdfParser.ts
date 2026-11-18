@@ -11,6 +11,10 @@ export async function loadPdfDocument(buffer: ArrayBuffer): Promise<PdfDocumentH
   const copy = new Uint8Array(buffer.slice(0));
   const loadingTask = pdfjsLib.getDocument({
     data: copy,
+    cMapUrl: '/pdfjs/cmaps/',
+    cMapPacked: true,
+    standardFontDataUrl: '/pdfjs/standard_fonts/',
+    wasmUrl: '/pdfjs/wasm/',
     useSystemFonts: true,
   });
   return loadingTask.promise;
