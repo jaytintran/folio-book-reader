@@ -1,10 +1,77 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <rect width="512" height="512" rx="112" fill="#2B2118"/>
-  <rect x="32" y="32" width="448" height="448" rx="84" fill="#F4EFE6"/>
-  <path d="M148 136C148 122.745 158.745 112 172 112H352C360.837 112 368 119.163 368 128V384C368 392.837 360.837 400 352 400H172C158.745 400 148 389.255 148 376V136Z" fill="#2B2118"/>
-  <path d="M180 112H352C360.837 112 368 119.163 368 128V352H180V112Z" fill="#9A4D1E"/>
-  <path d="M180 352H368V384C368 392.837 360.837 400 352 400H180V352Z" fill="#EDE5D8"/>
-  <rect x="216" y="168" width="112" height="14" rx="4" fill="#FAF6EE"/>
-  <rect x="216" y="200" width="82" height="10" rx="4" fill="#FAF6EE" fill-opacity="0.72"/>
-  <path d="M304 352V424L328 404L352 424V352H304Z" fill="#9A4D1E"/>
+  <defs>
+    <linearGradient id="folioSpineGlow" x1="256" y1="210" x2="256" y2="372" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#C4713B"/>
+      <stop offset="72%" stop-color="#B5602C"/>
+      <stop offset="100%" stop-color="#2A1B12"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Deep Obsidian Tile -->
+  <rect width="512" height="512" rx="112" fill="#171411"/>
+
+  <!-- Sculpted Crescent Moon (Warm Parchment Cream) -->
+  <path
+    d="M240.93 101.55 A74 74 0 1 0 328.45 189.07 A62 62 0 0 1 240.93 101.55 Z"
+    fill="#F4EFE6"
+  />
+
+  <!-- Warm Amber Reading Arc & Center Spine (Flush against open pages) -->
+  <path
+    d="M158 201
+       A102 102 0 0 0 247 275.5
+       L247 368
+       L265 368
+       L265 275.5
+       A102 102 0 0 0 354 201
+       L337 199
+       A85 85 0 0 1 175 199
+       Z"
+    fill="url(#folioSpineGlow)"
+  />
+
+  <!-- Left Open Book Page -->
+  <path
+    d="M126 212
+       C137 204 149 200 160 199.5
+       A102 102 0 0 0 247 275.5
+       L247 366
+       C214 347 170 343 126 354
+       Z"
+    fill="#F4EFE6"
+  />
+
+  <!-- Right Open Book Page -->
+  <path
+    d="M386 212
+       C375 204 363 200 352 199.5
+       A102 102 0 0 1 265 275.5
+       L265 366
+       C298 347 342 343 386 354
+       Z"
+    fill="#F4EFE6"
+  />
+
+  <!-- Outer Hardcover Binding Cradle -->
+  <path
+    d="M100 226
+       C100 220 105 215 111 215
+       L114 215
+       L114 368
+       C161 356 212 361 246 385
+       C251 389 261 389 266 385
+       C300 361 351 356 398 368
+       L398 215
+       L401 215
+       C407 215 412 220 412 226
+       L412 374
+       C412 381 406 386 399 385
+       C353 374 307 379 276 402
+       C269 408 262 411 256 411
+       C250 411 243 408 236 402
+       C205 379 159 374 113 385
+       C106 386 100 381 100 374
+       Z"
+    fill="#F4EFE6"
+  />
 </svg>
