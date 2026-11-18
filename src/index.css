@@ -1,0 +1,354 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root,
+.theme-sepia {
+  --bg-canvas: #f4efe6;
+  --bg-surface: #faf6ee;
+  --bg-surface-hover: #efe8dc;
+  --bg-sidebar: #ede5d8;
+  --bg-elevated: #fcf9f3;
+  --bg-input: #faf6ee;
+  --bg-accent-subtle: rgba(154, 77, 30, 0.1);
+  --text-primary: #2b2118;
+  --text-secondary: #6e5d4f;
+  --text-muted: #8f7e6f;
+  --border-subtle: #ddd2c0;
+  --border-strong: #c7b8a0;
+  --accent: #9a4d1e;
+  --accent-hover: #7e3d15;
+  --accent-contrast: #faf6ee;
+  --danger: #b43c2f;
+  --danger-hover: #962f24;
+  --success: #3e6b48;
+  --highlight-amber: rgba(217, 155, 43, 0.32);
+  --highlight-sage: rgba(98, 152, 108, 0.3);
+  --highlight-sky: rgba(74, 134, 179, 0.28);
+  --highlight-rose: rgba(196, 100, 108, 0.3);
+  --reader-selection: rgba(154, 77, 30, 0.22);
+  color-scheme: light;
+}
+
+.dark {
+  --bg-canvas: #121110;
+  --bg-surface: #1a1917;
+  --bg-surface-hover: #23211e;
+  --bg-sidebar: #161513;
+  --bg-elevated: #201e1c;
+  --bg-input: #1a1917;
+  --bg-accent-subtle: rgba(217, 138, 78, 0.14);
+  --text-primary: #eae4dc;
+  --text-secondary: #9c948a;
+  --text-muted: #756e66;
+  --border-subtle: #2b2825;
+  --border-strong: #3e3a35;
+  --accent: #d98a4e;
+  --accent-hover: #e59c63;
+  --accent-contrast: #141210;
+  --danger: #d95d52;
+  --danger-hover: #e47167;
+  --success: #6ba376;
+  --highlight-amber: rgba(217, 155, 43, 0.28);
+  --highlight-sage: rgba(107, 163, 118, 0.26);
+  --highlight-sky: rgba(96, 156, 201, 0.26);
+  --highlight-rose: rgba(209, 109, 117, 0.28);
+  --reader-selection: rgba(217, 138, 78, 0.28);
+  color-scheme: dark;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+      color 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .dark body {
+    letter-spacing: 0.008em;
+  }
+
+  ::selection {
+    background-color: var(--reader-selection);
+    color: inherit;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+.font-serif-editorial {
+  font-family: "Source Serif 4", Georgia, Cambria, serif;
+}
+
+.font-sans-ui {
+  font-family: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+}
+
+.font-mono-tabular {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom subtle scrollbars harmonized to theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-muted);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* Reflowable Reader Prose Styling */
+.folio-prose {
+  color: var(--text-primary);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.folio-prose h1,
+.folio-prose h2,
+.folio-prose h3,
+.folio-prose h4,
+.folio-prose h5,
+.folio-prose h6 {
+  font-family: "Source Serif 4", Georgia, serif;
+  color: var(--text-primary);
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 1.8em;
+  margin-bottom: 0.65em;
+  text-wrap: balance;
+}
+
+.folio-prose h1 {
+  font-size: 1.85em;
+}
+.folio-prose h2 {
+  font-size: 1.45em;
+}
+.folio-prose h3 {
+  font-size: 1.2em;
+}
+
+.folio-prose p {
+  margin-top: 0;
+  margin-bottom: var(--folio-para-gap, 1.1em);
+  text-align: var(--folio-text-align, left);
+  text-indent: var(--folio-text-indent, 0em);
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+
+.folio-prose h1 + p,
+.folio-prose h2 + p,
+.folio-prose h3 + p,
+.folio-prose h4 + p,
+.folio-prose hr + p,
+.folio-prose p:first-child {
+  text-indent: 0;
+}
+
+.folio-prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.folio-prose blockquote {
+  margin: 1.5em 0;
+  padding: 0.25em 1.25em;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.folio-prose img,
+.folio-prose svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 1.5em auto;
+  border-radius: 4px;
+  break-inside: avoid;
+}
+
+.folio-prose pre,
+.folio-prose code {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.88em;
+  background-color: var(--bg-sidebar);
+  border-radius: 4px;
+}
+
+.folio-prose code {
+  padding: 0.15em 0.35em;
+}
+
+.folio-prose pre {
+  padding: 1em 1.25em;
+  overflow-x: auto;
+  margin: 1.25em 0;
+  break-inside: avoid;
+}
+
+.folio-prose pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.folio-prose ul,
+.folio-prose ol {
+  margin: 1em 0 1.25em 1.5em;
+}
+
+.folio-prose li {
+  margin-bottom: 0.4em;
+}
+
+.folio-prose hr {
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  margin: 2em auto;
+  width: 40%;
+}
+
+.folio-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5em 0;
+  font-size: 0.9em;
+  break-inside: avoid;
+}
+
+.folio-prose th,
+.folio-prose td {
+  border: 1px solid var(--border-subtle);
+  padding: 0.5em 0.75em;
+  text-align: left;
+}
+
+/* Two-Page Spread Multi-Column Mode */
+.folio-spread-content {
+  column-fill: auto;
+  height: 100%;
+}
+
+.folio-spread-content h1,
+.folio-spread-content h2,
+.folio-spread-content h3 {
+  break-after: avoid;
+}
+
+.folio-spread-content p {
+  orphans: 2;
+  widows: 2;
+}
+
+/* Reader inline highlight spans */
+mark.folio-hl {
+  color: inherit;
+  border-radius: 2px;
+  padding: 0.05em 0;
+  cursor: pointer;
+  transition: filter 150ms ease;
+}
+
+mark.folio-hl:hover {
+  filter: brightness(0.92);
+}
+
+mark.folio-hl-amber {
+  background-color: var(--highlight-amber);
+}
+mark.folio-hl-sage {
+  background-color: var(--highlight-sage);
+}
+mark.folio-hl-sky {
+  background-color: var(--highlight-sky);
+}
+mark.folio-hl-rose {
+  background-color: var(--highlight-rose);
+}
+
+/* In-book search match highlight */
+mark.folio-search-match {
+  background-color: var(--accent);
+  color: var(--accent-contrast);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* PDF Canvas theme toning */
+.pdf-tone-sepia canvas {
+  filter: sepia(0.28) contrast(0.96) brightness(0.97);
+}
+
+.pdf-tone-dark canvas {
+  filter: invert(0.88) hue-rotate(180deg) sepia(0.12) contrast(0.94);
+}
+
+/* PDF Text Layer (pdfjs-dist) */
+.folio-pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  user-select: text;
+}
+
+.folio-pdf-text-layer span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.folio-pdf-text-layer span.folio-pdf-search-hit {
+  background-color: rgba(217, 138, 78, 0.42);
+  border-radius: 2px;
+}
+
+.folio-pdf-text-layer ::selection {
+  background: var(--reader-selection);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
