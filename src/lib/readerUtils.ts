@@ -1,6 +1,7 @@
 import type {ParsedChapter, SearchMatch} from '../types/library';
 
 export const WORDS_PER_MINUTE = 240;
+export const WORDS_PER_VIRTUAL_PAGE = 260;
 export const PDF_MINUTES_PER_PAGE = 1.5;
 
 export interface ChapterMetric {
@@ -9,12 +10,15 @@ export interface ChapterMetric {
   wordCount: number;
   startWordOffset: number;
   startPct: number; // 0..100
+  startVirtualPage: number; // 1-based
+  virtualPageCount: number;
   plainText: string;
 }
 
 export interface BookReadingMetrics {
   chapters: ChapterMetric[];
   totalWords: number;
+  totalVirtualPages: number;
 }
 
 export function stripHtmlToText(html: string): string {
@@ -39,6 +43,12 @@ export function computeReflowableMetrics(chapters: ParsedChapter[]): BookReading
     const words = txt.split(/\s+/).filter(Boolean).length;
     return Math.max(1, words);
   });
+  const virtualCounts = chapters.map((ch, idx) => {
+    const mediaMatches = ch.html.match(/<(?:img|svg)\b/gi);
+    const mediaCount = mediaMatches ? mediaMatches.length : 0;
+    const effectiveWords = counts[idx] + mediaCount * 65;
+    return Math.max(1, Math.round(effectiveWords / WORDS_PER_VIRTUAL_PAGE));
+  });
 
   const totalWords = Math.max(
     1,
@@ -46,21 +56,60 @@ export function computeReflowableMetrics(chapters: ParsedChapter[]): BookReading
   );
 
   let running = 0;
+  let runningPages = 1;
   const metrics: ChapterMetric[] = chapters.map((ch, idx) => {
     const startWordOffset = running;
     const startPct = (running / totalWords) * 100;
+    const startVirtualPage = runningPages;
+    const virtualPageCount = virtualCounts[idx];
     running += counts[idx];
+    runningPages += virtualPageCount;
     return {
       index: idx,
       title: ch.title || `Section ${idx + 1}`,
       wordCount: counts[idx],
       startWordOffset,
       startPct,
+      startVirtualPage,
+      virtualPageCount,
       plainText: plainTexts[idx],
     };
   });
 
-  return {chapters: metrics, totalWords};
+  const totalVirtualPages = Math.max(1, runningPages - 1);
+
+  return {chapters: metrics, totalWords, totalVirtualPages};
+}
+
+export function getVirtualPageAtLocation(
+  metrics: BookReadingMetrics,
+  unitIndex: number,
+  scrollRatio: number
+): number {
+  if (metrics.chapters.length === 0) return 1;
+  const clampedUnit = Math.min(metrics.chapters.length - 1, Math.max(0, unitIndex));
+  const ch = metrics.chapters[clampedUnit];
+  const clampedRatio = Math.min(1, Math.max(0, scrollRatio));
+  const offset = Math.round(clampedRatio * Math.max(0, ch.virtualPageCount - 1));
+  return Math.min(metrics.totalVirtualPages, Math.max(1, ch.startVirtualPage + offset));
+}
+
+export function getLocationForVirtualPage(
+  metrics: BookReadingMetrics,
+  virtualPage: number
+): {unitIndex: number; scrollRatio: number; chapter: ChapterMetric} {
+  const clampedPage = Math.min(metrics.totalVirtualPages, Math.max(1, Math.round(virtualPage)));
+  let match = metrics.chapters[0];
+  for (const ch of metrics.chapters) {
+    if (ch.startVirtualPage <= clampedPage) match = ch;
+    else break;
+  }
+  const offset = Math.max(0, clampedPage - match.startVirtualPage);
+  const scrollRatio =
+    match.virtualPageCount > 1
+      ? Math.min(0.98, offset / Math.max(1, match.virtualPageCount - 1))
+      : 0;
+  return {unitIndex: match.index, scrollRatio, chapter: match};
 }
 
 export function formatReadingTime(minutes: number): string {

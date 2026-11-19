@@ -155,7 +155,7 @@ export interface ReaderPreferences {
   fontSize: number; // px, 14..26
   lineHeight: number; // 1.35..2.1
   pageWidth: number; // px, 580..920
-  readingLayout: 'scroll' | 'spread';
+  readingLayout: 'scroll' | 'page' | 'spread';
   textAlign: 'left' | 'justify';
   paragraphSpacing: number; // em, 0.3..1.8
   textIndent: number; // em, 0..2.2
@@ -185,12 +185,14 @@ export interface ParsedTocItem {
   unitIndex: number;
   depth: number;
   href?: string;
+  anchorId?: string;
 }
 
 export interface ParsedChapter {
   index: number;
   title: string;
   html: string;
+  spinePath?: string;
 }
 
 export interface ParsedReflowableBook {

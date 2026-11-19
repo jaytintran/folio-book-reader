@@ -201,33 +201,45 @@ export const TypographyPopover: React.FC<TypographyPopoverProps> = ({
         </>
       ) : (
         <>
-          {/* Reading Layout: Scroll vs Two-Page Spread */}
+          {/* Reading Layout: Continuous vs Single Page vs Two-Page Spread */}
           <div>
             <div className="text-[11px] font-medium text-[var(--text-muted)] mb-2">Page Layout</div>
-            <div className="grid grid-cols-2 gap-1.5 p-1 rounded-md bg-[var(--bg-sidebar)]">
+            <div className="grid grid-cols-3 gap-1 p-1 rounded-md bg-[var(--bg-sidebar)]">
               <button
                 type="button"
                 onClick={() => onUpdate({readingLayout: 'scroll'})}
-                className={`inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded transition-colors cursor-pointer ${
+                className={`inline-flex items-center justify-center gap-1 py-1.5 px-1 text-[11px] font-medium rounded transition-colors cursor-pointer whitespace-nowrap ${
                   prefs.readingLayout === 'scroll'
                     ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                 }`}
               >
-                <ScrollText className="w-3.5 h-3.5" />
+                <ScrollText className="w-3.5 h-3.5 shrink-0" />
                 <span>Continuous</span>
               </button>
               <button
                 type="button"
+                onClick={() => onUpdate({readingLayout: 'page'})}
+                className={`inline-flex items-center justify-center gap-1 py-1.5 px-1 text-[11px] font-medium rounded transition-colors cursor-pointer whitespace-nowrap ${
+                  prefs.readingLayout === 'page'
+                    ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <BookOpen className="w-3.5 h-3.5 shrink-0" />
+                <span>Single Page</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => onUpdate({readingLayout: 'spread'})}
-                className={`inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded transition-colors cursor-pointer ${
+                className={`inline-flex items-center justify-center gap-1 py-1.5 px-1 text-[11px] font-medium rounded transition-colors cursor-pointer whitespace-nowrap ${
                   prefs.readingLayout === 'spread'
                     ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                 }`}
               >
-                <Columns2 className="w-3.5 h-3.5" />
-                <span>Two-Page Spread</span>
+                <Columns2 className="w-3.5 h-3.5 shrink-0" />
+                <span>Spread</span>
               </button>
             </div>
           </div>
@@ -396,7 +408,7 @@ export const TypographyPopover: React.FC<TypographyPopoverProps> = ({
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[11px] font-medium text-[var(--text-muted)]">
-                  {prefs.readingLayout === 'spread' ? 'Spread Width' : 'Column Width'}
+                  {prefs.readingLayout === 'spread' ? 'Spread Width' : 'Page Width'}
                 </span>
                 <span className="font-mono-tabular text-[11px] text-[var(--text-primary)]">
                   {prefs.pageWidth}px

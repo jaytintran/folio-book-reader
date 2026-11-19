@@ -7,8 +7,23 @@ import type {
   ParsedTocItem,
 } from '../../types/library';
 
+const FOLIO_ALLOWED_URI_REGEXP =
+  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix|blob|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
+
+const SELF_CLOSING_NON_VOID_RE =
+  /<(a|div|span|p|title|h[1-6]|li|dt|dd|td|th|section|article|aside|header|footer|nav|figure|figcaption|blockquote|pre|code|em|strong|b|i|u|sup|sub|small|cite|q)\b([^>]*?)\s*\/>/gi;
+
+function safeDecodeUri(val: string): string {
+  try {
+    return decodeURIComponent(val);
+  } catch {
+    return val;
+  }
+}
+
 function normalizePath(baseDir: string, relPath: string): string {
-  const cleanRel = decodeURIComponent(relPath.split('#')[0].split('?')[0]);
+  const cleanRaw = relPath.trim().split('#')[0].split('?')[0].replace(/\\/g, '/');
+  const cleanRel = safeDecodeUri(cleanRaw);
   if (cleanRel.startsWith('/')) return cleanRel.slice(1);
   const parts = (baseDir ? `${baseDir}/${cleanRel}` : cleanRel).split('/');
   const resolved: string[] = [];
@@ -37,12 +52,26 @@ function parseXml(text: string): Document {
   return doc;
 }
 
+function parseChapterDocument(rawHtml: string, parser: DOMParser): Document {
+  const looksXml = /<\?xml|\bxmlns=|<[a-z]+\b[^>]*\/>/i.test(rawHtml);
+  if (looksXml) {
+    const xhtmlDoc = parser.parseFromString(rawHtml, 'application/xhtml+xml');
+    if (!xhtmlDoc.querySelector('parsererror') && xhtmlDoc.querySelector('body')) {
+      return xhtmlDoc;
+    }
+  }
+  const expanded = rawHtml.replace(SELF_CLOSING_NON_VOID_RE, '<$1$2></$1>');
+  return parser.parseFromString(expanded, 'text/html');
+}
+
 function getZipFileCaseInsensitive(zip: JSZip, targetPath: string): JSZip.JSZipObject | null {
-  const direct = zip.file(targetPath);
+  const normalized = targetPath.replace(/^\.\//, '').replace(/^\/+/, '');
+  const direct = zip.file(normalized);
   if (direct) return direct;
-  const lower = targetPath.toLowerCase();
+  const lower = normalized.toLowerCase();
   for (const name of Object.keys(zip.files)) {
-    if (name.toLowerCase() === lower) {
+    const cleanName = name.replace(/^\.\//, '').replace(/^\/+/, '');
+    if (cleanName.toLowerCase() === lower || safeDecodeUri(cleanName).toLowerCase() === lower) {
       return zip.files[name];
     }
   }
@@ -209,6 +238,18 @@ export async function extractEpubMetadata(
   };
 }
 
+function extractHashAnchor(href: string): string | undefined {
+  const hashPos = href.indexOf('#');
+  if (hashPos === -1) return undefined;
+  const raw = href.slice(hashPos + 1).trim();
+  if (!raw) return undefined;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export async function parseEpubForReading(buffer: ArrayBuffer): Promise<ParsedReflowableBook> {
   const zip = await JSZip.loadAsync(buffer);
   const {opfDoc, opfDir} = await locateOpf(zip);
@@ -217,31 +258,45 @@ export async function parseEpubForReading(buffer: ArrayBuffer): Promise<ParsedRe
 
   // Map image assets to blob URLs lazily
   const assetUrlCache = new Map<string, string>();
-  async function resolveAssetUrl(fullPath: string): Promise<string | null> {
-    const key = fullPath.toLowerCase();
-    if (assetUrlCache.has(key)) return assetUrlCache.get(key)!;
-    const file = getZipFileCaseInsensitive(zip, fullPath);
-    if (!file) return null;
-    const ext = fullPath.split('.').pop()?.toLowerCase() || '';
-    const mimeMap: Record<string, string> = {
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      png: 'image/png',
-      gif: 'image/gif',
-      webp: 'image/webp',
-      svg: 'image/svg+xml',
-    };
-    const bytes = await file.async('arraybuffer');
-    const blob = new Blob([bytes], {type: mimeMap[ext] || 'application/octet-stream'});
-    const url = URL.createObjectURL(blob);
-    cleanupUrls.push(url);
-    assetUrlCache.set(key, url);
-    return url;
+  async function resolveAssetUrl(fullPath: string, fallbackBaseDir?: string, rawSrc?: string): Promise<string | null> {
+    const candidates = [fullPath];
+    if (fallbackBaseDir !== undefined && rawSrc) {
+      candidates.push(normalizePath(fallbackBaseDir, rawSrc));
+    }
+    if (rawSrc) {
+      candidates.push(normalizePath('', rawSrc));
+    }
+
+    for (const candidate of candidates) {
+      const key = candidate.toLowerCase();
+      if (assetUrlCache.has(key)) return assetUrlCache.get(key)!;
+      const file = getZipFileCaseInsensitive(zip, candidate);
+      if (!file) continue;
+      const ext = candidate.split('.').pop()?.toLowerCase() || '';
+      const mimeMap: Record<string, string> = {
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        jfif: 'image/jpeg',
+        png: 'image/png',
+        gif: 'image/gif',
+        webp: 'image/webp',
+        avif: 'image/avif',
+        bmp: 'image/bmp',
+        svg: 'image/svg+xml',
+      };
+      const bytes = await file.async('arraybuffer');
+      const blob = new Blob([bytes], {type: mimeMap[ext] || 'image/jpeg'});
+      const url = URL.createObjectURL(blob);
+      cleanupUrls.push(url);
+      assetUrlCache.set(key, url);
+      return url;
+    }
+    return null;
   }
 
-  // Spine order
+  // Spine order (filtered to files that actually exist in archive so chapter indices match 1:1)
   const spineRefs = Array.from(opfDoc.querySelectorAll('spine > itemref, itemref'));
-  const spinePaths: string[] = [];
+  const spineEntries: Array<{path: string; file: JSZip.JSZipObject}> = [];
   const spinePathToIndex = new Map<string, number>();
 
   for (const ref of spineRefs) {
@@ -249,8 +304,10 @@ export async function parseEpubForReading(buffer: ArrayBuffer): Promise<ParsedRe
     if (!idref) continue;
     const item = manifest.get(idref);
     if (!item) continue;
-    const idx = spinePaths.length;
-    spinePaths.push(item.fullPath);
+    const file = getZipFileCaseInsensitive(zip, item.fullPath);
+    if (!file) continue;
+    const idx = spineEntries.length;
+    spineEntries.push({path: item.fullPath, file});
     spinePathToIndex.set(item.fullPath.toLowerCase(), idx);
   }
 
@@ -258,22 +315,22 @@ export async function parseEpubForReading(buffer: ArrayBuffer): Promise<ParsedRe
   const chapters: ParsedChapter[] = [];
   const htmlParser = new DOMParser();
 
-  for (let i = 0; i < spinePaths.length; i++) {
-    const chapterPath = spinePaths[i];
+  for (let i = 0; i < spineEntries.length; i++) {
+    const {path: chapterPath, file} = spineEntries[i];
     const chapterDir = getDirName(chapterPath);
-    const file = getZipFileCaseInsensitive(zip, chapterPath);
-    if (!file) continue;
 
     const rawHtml = await file.async('string');
-    const doc = htmlParser.parseFromString(rawHtml, 'text/html');
+    const doc = parseChapterDocument(rawHtml, htmlParser);
 
-    // Resolve embedded <img> and SVG <image> elements to local Blob URLs
+    // Resolve embedded <img> elements to local Blob URLs
     const imgs = Array.from(doc.querySelectorAll('img'));
     for (const img of imgs) {
-      const src = img.getAttribute('src');
-      if (!src || src.startsWith('data:') || src.startsWith('http')) continue;
+      const src = (img.getAttribute('src') || '').trim();
+      if (!src || src.startsWith('data:') || src.startsWith('http') || src.startsWith('blob:')) {
+        continue;
+      }
       const target = normalizePath(chapterDir, src);
-      const blobUrl = await resolveAssetUrl(target);
+      const blobUrl = await resolveAssetUrl(target, opfDir, src);
       if (blobUrl) {
         img.setAttribute('src', blobUrl);
       } else {
@@ -281,15 +338,119 @@ export async function parseEpubForReading(buffer: ArrayBuffer): Promise<ParsedRe
       }
     }
 
-    const svgImages = Array.from(doc.querySelectorAll('image'));
-    for (const img of svgImages) {
-      const href = img.getAttribute('xlink:href') || img.getAttribute('href');
-      if (!href || href.startsWith('data:') || href.startsWith('http')) continue;
-      const target = normalizePath(chapterDir, href);
-      const blobUrl = await resolveAssetUrl(target);
-      if (blobUrl) {
-        img.setAttribute('href', blobUrl);
-        img.setAttribute('xlink:href', blobUrl);
+    // Resolve SVG <image> elements and unwrap single-image cover/illustration SVGs into crisp <img>
+    const svgs = Array.from(doc.querySelectorAll('svg'));
+    for (const svg of svgs) {
+      const svgImages = Array.from(svg.querySelectorAll('image'));
+      for (const svgImg of svgImages) {
+        const href = (
+          svgImg.getAttribute('xlink:href') ||
+          svgImg.getAttributeNS('http://www.w3.org/1999/xlink', 'href') ||
+          svgImg.getAttribute('href') ||
+          ''
+        ).trim();
+        if (!href || href.startsWith('data:') || href.startsWith('http') || href.startsWith('blob:')) {
+          continue;
+        }
+        const target = normalizePath(chapterDir, href);
+        const blobUrl = await resolveAssetUrl(target, opfDir, href);
+        if (blobUrl) {
+          svgImg.setAttribute('href', blobUrl);
+          svgImg.setAttribute('xlink:href', blobUrl);
+        }
+      }
+
+      const hasVectorShapes = Boolean(
+        svg.querySelector('path, circle, ellipse, rect, polygon, polyline, line, text, use')
+      );
+      if (svgImages.length === 1 && !hasVectorShapes) {
+        const resolvedHref =
+          svgImages[0].getAttribute('href') || svgImages[0].getAttribute('xlink:href') || '';
+        if (resolvedHref) {
+          const replacementImg = doc.createElement('img');
+          replacementImg.setAttribute('src', resolvedHref);
+          replacementImg.setAttribute('alt', i === 0 ? 'Cover' : 'Illustration');
+          svg.replaceWith(replacementImg);
+        }
+      }
+    }
+
+    // Preserve anchor targets across chapters without ID collisions in continuous scroll DOM
+    const anchorEls = Array.from(doc.querySelectorAll('[id], a[name]'));
+    for (const el of anchorEls) {
+      const rawId = el.getAttribute('id') || el.getAttribute('name') || '';
+      if (!rawId) continue;
+      el.setAttribute('data-folio-target-id', rawId);
+      el.setAttribute('id', `folio-ch-${i}-${rawId}`);
+    }
+
+    // Normalize <a> tags: unwrap anchor-only <a> (without href) so prose never gets underlined as a link
+    const allAnchors = Array.from(doc.querySelectorAll('a'));
+    for (const link of allAnchors) {
+      const rawHref = (link.getAttribute('href') || '').trim();
+      if (!rawHref) {
+        const span = doc.createElement('span');
+        const targetId = link.getAttribute('data-folio-target-id');
+        const scopedId = link.getAttribute('id');
+        if (scopedId) span.setAttribute('id', scopedId);
+        if (targetId) span.setAttribute('data-folio-target-id', targetId);
+        while (link.firstChild) {
+          span.appendChild(link.firstChild);
+        }
+        link.replaceWith(span);
+        continue;
+      }
+
+      if (/^(mailto:|tel:)/i.test(rawHref)) continue;
+      if (/^javascript:/i.test(rawHref)) {
+        link.removeAttribute('href');
+        continue;
+      }
+
+      if (/^https?:\/\//i.test(rawHref)) {
+        link.setAttribute('target', '_blank');
+        link.setAttribute('rel', 'noopener noreferrer');
+        continue;
+      }
+
+      const hashPos = rawHref.indexOf('#');
+      const filePart = hashPos === -1 ? rawHref : rawHref.slice(0, hashPos);
+      const anchorId = extractHashAnchor(rawHref);
+      const targetPath = filePart
+        ? normalizePath(chapterDir, filePart).toLowerCase()
+        : chapterPath.toLowerCase();
+      const targetIdx =
+        spinePathToIndex.get(targetPath) ??
+        (filePart ? spinePathToIndex.get(normalizePath(opfDir, filePart).toLowerCase()) : undefined);
+
+      if (targetIdx !== undefined) {
+        link.setAttribute('data-folio-chapter', String(targetIdx));
+        if (anchorId) {
+          link.setAttribute('data-folio-anchor', anchorId);
+        }
+        link.setAttribute('href', `#folio-ch-${targetIdx}${anchorId ? `-${anchorId}` : ''}`);
+
+        const epubType = (
+          link.getAttribute('epub:type') ||
+          link.getAttributeNS('http://www.idpf.org/2007/ops', 'type') ||
+          ''
+        ).toLowerCase();
+        const role = (link.getAttribute('role') || '').toLowerCase();
+        const cls = (link.getAttribute('class') || '').toLowerCase();
+        const insideSup = Boolean(link.closest('sup'));
+        const hashLooksLikeNote =
+          Boolean(anchorId) && /^(?:fn|note|ftn|endnote|footnote|n)[-_:.]?\d+/i.test(anchorId!);
+        const isNoteref =
+          epubType.includes('noteref') ||
+          role === 'doc-noteref' ||
+          cls.includes('noteref') ||
+          cls.includes('footnote') ||
+          insideSup ||
+          (hashLooksLikeNote && !link.closest('nav'));
+
+        if (isNoteref) {
+          link.setAttribute('data-folio-noteref', 'true');
+        }
       }
     }
 
@@ -299,28 +460,49 @@ export async function parseEpubForReading(buffer: ArrayBuffer): Promise<ParsedRe
     // Strip hardcoded color/background-color inline styles so Sepia & Dark themes always stay legible
     doc.querySelectorAll('[style]').forEach((el) => {
       const htmlEl = el as HTMLElement;
-      htmlEl.style.removeProperty('color');
-      htmlEl.style.removeProperty('background');
-      htmlEl.style.removeProperty('background-color');
-      htmlEl.style.removeProperty('font-family');
-      htmlEl.style.removeProperty('font-size');
-      htmlEl.style.removeProperty('line-height');
+      htmlEl.style?.removeProperty?.('color');
+      htmlEl.style?.removeProperty?.('background');
+      htmlEl.style?.removeProperty?.('background-color');
+      htmlEl.style?.removeProperty?.('font-family');
+      htmlEl.style?.removeProperty?.('font-size');
+      htmlEl.style?.removeProperty?.('line-height');
     });
 
     const heading =
       doc.querySelector('h1, h2, h3, title')?.textContent?.replace(/\s+/g, ' ').trim() ||
       `Section ${i + 1}`;
 
-    const bodyHtml = doc.body?.innerHTML || rawHtml;
+    // Serialize through HTML DOM nodes so non-void tags (<a>, <div>, <span>) always have explicit closing tags
+    const bodyEl = doc.querySelector('body') || doc.documentElement;
+    let bodyHtml = rawHtml;
+    if (bodyEl) {
+      const htmlContainer = document.createElement('div');
+      for (const child of Array.from(bodyEl.childNodes)) {
+        htmlContainer.appendChild(document.importNode(child, true));
+      }
+      bodyHtml = htmlContainer.innerHTML;
+    }
+
     const cleanHtml = DOMPurify.sanitize(bodyHtml, {
-      ADD_TAGS: ['svg', 'image', 'section', 'article', 'figure', 'figcaption'],
-      ADD_ATTR: ['xlink:href', 'viewBox', 'preserveAspectRatio'],
+      ALLOWED_URI_REGEXP: FOLIO_ALLOWED_URI_REGEXP,
+      ADD_TAGS: ['svg', 'image', 'section', 'article', 'figure', 'figcaption', 'aside'],
+      ADD_ATTR: [
+        'xlink:href',
+        'viewBox',
+        'preserveAspectRatio',
+        'data-folio-target-id',
+        'data-folio-chapter',
+        'data-folio-anchor',
+        'data-folio-noteref',
+        'role',
+      ],
     });
 
     chapters.push({
       index: i,
       title: heading.slice(0, 120),
       html: cleanHtml,
+      spinePath: chapterPath,
     });
   }
 
@@ -358,6 +540,7 @@ export async function parseEpubForReading(buffer: ArrayBuffer): Promise<ParsedRe
                 unitIndex,
                 depth,
                 href,
+                anchorId: extractHashAnchor(href),
               });
             }
           }
@@ -403,6 +586,7 @@ export async function parseEpubForReading(buffer: ArrayBuffer): Promise<ParsedRe
                   unitIndex,
                   depth,
                   href: src,
+                  anchorId: extractHashAnchor(src),
                 });
               }
             }

@@ -65,6 +65,11 @@ function clampSidebarWidth(w: unknown): number {
   return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(w)));
 }
 
+function normalizeReadingLayout(val: unknown): ReaderPreferences['readingLayout'] {
+  if (val === 'page' || val === 'spread' || val === 'scroll') return val;
+  return 'scroll';
+}
+
 function loadPreferences(): ReaderPreferences {
   try {
     const raw = localStorage.getItem(PREFS_STORAGE_KEY);
@@ -74,6 +79,7 @@ function loadPreferences(): ReaderPreferences {
       ...DEFAULT_PREFERENCES,
       ...parsed,
       theme: parsed.theme === 'dark' ? 'dark' : 'sepia',
+      readingLayout: normalizeReadingLayout(parsed.readingLayout),
     };
   } catch {
     return DEFAULT_PREFERENCES;
@@ -220,6 +226,7 @@ export function usePreferences() {
           ...DEFAULT_PREFERENCES,
           ...nextReader,
           theme: nextReader.theme === 'dark' ? 'dark' : 'sepia',
+          readingLayout: normalizeReadingLayout(nextReader.readingLayout),
         });
       }
       if (nextLibrary) {

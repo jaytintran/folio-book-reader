@@ -19,6 +19,7 @@ interface ReaderDrawerProps {
   format: BookFormat;
   currentUnitIndex: number;
   toc: ParsedTocItem[];
+  chapterStartPages?: Record<number, number>;
   bookmarks: BookmarkRecord[];
   searchQuery: string;
   searchMatches: SearchMatch[];
@@ -29,7 +30,7 @@ interface ReaderDrawerProps {
   onSearchQueryChange: (q: string) => void;
   onSelectSearchMatch: (match: SearchMatch) => void;
   onStepSearchMatch: (dir: 1 | -1) => void;
-  onJumpToUnit: (unitIndex: number, scrollRatio?: number) => void;
+  onJumpToUnit: (unitIndex: number, scrollRatio?: number, anchorId?: string) => void;
   onDeleteBookmark: (id: string) => void;
   onClose: () => void;
 }
@@ -43,6 +44,7 @@ export const ReaderDrawer: React.FC<ReaderDrawerProps> = ({
   format,
   currentUnitIndex,
   toc,
+  chapterStartPages,
   bookmarks,
   searchQuery,
   searchMatches,
@@ -175,12 +177,18 @@ export const ReaderDrawer: React.FC<ReaderDrawerProps> = ({
               <nav className="space-y-0.5" aria-label="Table of contents">
                 {toc.map((item) => {
                   const active = item.unitIndex === currentUnitIndex;
+                  const pageBadge =
+                    format === 'pdf'
+                      ? `p.${item.unitIndex}`
+                      : chapterStartPages?.[item.unitIndex]
+                        ? `p.${chapterStartPages[item.unitIndex]}`
+                        : `${item.unitIndex + 1}`;
                   return (
                     <button
                       key={item.id}
                       type="button"
                       onClick={() => {
-                        onJumpToUnit(item.unitIndex, 0);
+                        onJumpToUnit(item.unitIndex, 0, item.anchorId);
                         if (!docked) onClose();
                       }}
                       style={{paddingLeft: `${10 + Math.min(item.depth, 3) * 12}px`}}
@@ -192,7 +200,7 @@ export const ReaderDrawer: React.FC<ReaderDrawerProps> = ({
                     >
                       <span className="truncate">{item.title}</span>
                       <span className="font-mono-tabular text-[11px] text-[var(--text-muted)] shrink-0">
-                        {format === 'pdf' ? `p.${item.unitIndex}` : item.unitIndex + 1}
+                        {pageBadge}
                       </span>
                     </button>
                   );
@@ -307,7 +315,11 @@ export const ReaderDrawer: React.FC<ReaderDrawerProps> = ({
                           {match.unitLabel}
                         </span>
                         <span className="font-mono-tabular shrink-0">
-                          {format === 'pdf' ? `p.${match.unitIndex}` : `#${match.unitIndex + 1}`}
+                          {format === 'pdf'
+                            ? `p.${match.unitIndex}`
+                            : chapterStartPages?.[match.unitIndex]
+                              ? `p.${chapterStartPages[match.unitIndex]}`
+                              : `#${match.unitIndex + 1}`}
                         </span>
                       </div>
                       <p className="font-serif-editorial text-xs leading-relaxed text-[var(--text-primary)]">
@@ -356,7 +368,11 @@ export const ReaderDrawer: React.FC<ReaderDrawerProps> = ({
                         </p>
                       )}
                       <div className="mt-1.5 font-mono-tabular text-[11px] text-[var(--text-muted)]">
-                        {format === 'pdf' ? `Page ${bm.unitIndex}` : `Section ${bm.unitIndex + 1}`}{' '}
+                        {format === 'pdf'
+                          ? `Page ${bm.unitIndex}`
+                          : chapterStartPages?.[bm.unitIndex]
+                            ? `Page ${chapterStartPages[bm.unitIndex]} · Ch. ${bm.unitIndex + 1}`
+                            : `Section ${bm.unitIndex + 1}`}{' '}
                         · {formatShortDate(bm.createdAt)}
                       </div>
                     </button>

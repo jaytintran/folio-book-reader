@@ -16,6 +16,7 @@ interface ReaderScrubberProps {
   format: BookFormat;
   progressPct: number; // 0..100
   currentLabel: string;
+  virtualPageLabel?: string;
   chapterMinutesLeft: number | null;
   bookMinutesLeft: number;
   markers: ScrubberMarker[];
@@ -36,6 +37,7 @@ export const ReaderScrubber: React.FC<ReaderScrubberProps> = ({
   format,
   progressPct,
   currentLabel,
+  virtualPageLabel,
   chapterMinutesLeft,
   bookMinutesLeft,
   markers,
@@ -105,17 +107,19 @@ export const ReaderScrubber: React.FC<ReaderScrubberProps> = ({
       className={positioningClass}
     >
       <div className="px-3 sm:px-5 h-13 flex items-center gap-2 sm:gap-4">
-        {/* Left: Current location & chapter time left */}
-        <div className="hidden md:flex flex-col min-w-[165px] max-w-[225px] shrink-0">
+        {/* Left: Current location & virtual page / chapter time */}
+        <div className="hidden md:flex flex-col min-w-[175px] max-w-[240px] shrink-0">
           <span className="text-[11px] font-medium text-[var(--text-primary)] truncate">
             {currentLabel}
           </span>
-          <span className="font-mono-tabular text-[10px] text-[var(--text-muted)]">
+          <span className="font-mono-tabular text-[10px] text-[var(--text-muted)] truncate">
             {format === 'pdf'
               ? `${formatReadingTime(bookMinutesLeft)} left in document`
-              : chapterMinutesLeft !== null
-                ? `${formatReadingTime(chapterMinutesLeft)} left in chapter`
-                : `${formatReadingTime(bookMinutesLeft)} left`}
+              : `${virtualPageLabel ? `${virtualPageLabel} · ` : ''}${
+                  chapterMinutesLeft !== null
+                    ? `${formatReadingTime(chapterMinutesLeft)} left in ch.`
+                    : `${formatReadingTime(bookMinutesLeft)} left`
+                }`}
           </span>
         </div>
 
@@ -203,8 +207,13 @@ export const ReaderScrubber: React.FC<ReaderScrubberProps> = ({
           </button>
         </div>
 
-        {/* Right: Book time left, percentage & independent Pin Bottom Bar toggle (desktop lg+) */}
+        {/* Right: Virtual page / book time left, percentage & independent Pin Bottom Bar toggle */}
         <div className="flex items-center gap-2 text-right shrink-0">
+          {format !== 'pdf' && virtualPageLabel && (
+            <span className="md:hidden font-mono-tabular text-[10px] text-[var(--text-muted)] whitespace-nowrap">
+              {virtualPageLabel}
+            </span>
+          )}
           {format !== 'pdf' && (
             <span className="hidden sm:inline font-mono-tabular text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
               {formatReadingTime(bookMinutesLeft)} left
