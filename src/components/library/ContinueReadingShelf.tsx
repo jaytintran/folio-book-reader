@@ -93,7 +93,10 @@ export const ContinueReadingShelf: React.FC<ContinueReadingShelfProps> = ({
             </span>
           </div>
 
-          <div className="flex gap-3.5 overflow-x-auto pb-2 -mx-1 px-1">
+          <div
+            data-folio-carousel="true"
+            className="flex gap-3.5 overflow-x-auto pb-2 -mx-1 px-1"
+          >
             {activeReads.map((book) => (
               <div
                 key={book.id}

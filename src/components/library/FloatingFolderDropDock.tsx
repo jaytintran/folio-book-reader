@@ -80,49 +80,40 @@ export const FloatingFolderDropDock: React.FC<FloatingFolderDropDockProps> = ({
       className="sticky top-0 z-30 h-0 overflow-visible pointer-events-none"
     >
       <div className="px-4 sm:px-5 lg:px-8 pt-3">
-        <div
-          className="pointer-events-auto rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)]/96 backdrop-blur-md shadow-xl px-3.5 py-2.5 transition-all duration-150 ease-out"
-          style={{transform: 'translateY(0)'}}
-        >
-          <div className="flex items-center gap-3 overflow-x-auto pb-0.5">
+        <div className="pointer-events-auto rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)]/96 backdrop-blur-md shadow-xl px-4 py-3 max-h-[55vh] overflow-y-auto transition-all duration-150 ease-out">
+          <div className="flex flex-wrap items-center gap-2.5">
             {/* Contextual Remove Target when inside a folder */}
             {activeFolderRemovalTarget && (
-              <>
-                <div
-                  onDragOver={handleDragOver('__remove__')}
-                  onDragLeave={handleDragLeave('__remove__')}
-                  onDrop={(e) => {
-                    const ids = extractDraggedBookIds(e.dataTransfer);
-                    if (ids.length > 0) {
-                      e.preventDefault();
-                      onDropToRemoveFromCurrentFolder(ids);
-                    }
-                    setHoveredKey(null);
-                  }}
-                  className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors whitespace-nowrap ${
-                    hoveredKey === '__remove__'
-                      ? 'border-[var(--accent)] ring-2 ring-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)]'
-                      : 'border-dashed border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-primary)]'
-                  }`}
-                >
-                  {hoveredKey === '__remove__' ? (
-                    <FolderMinus className="w-3.5 h-3.5 shrink-0" />
-                  ) : (
-                    <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
-                  )}
-                  <span>Remove from &ldquo;{activeFolderRemovalTarget.name}&rdquo;</span>
-                </div>
-
-                {(currentViewFolders.length > 0 || flatSidebarFolders.length > 0) && (
-                  <div className="h-5 w-px bg-[var(--border-subtle)] shrink-0" />
+              <div
+                onDragOver={handleDragOver('__remove__')}
+                onDragLeave={handleDragLeave('__remove__')}
+                onDrop={(e) => {
+                  const ids = extractDraggedBookIds(e.dataTransfer);
+                  if (ids.length > 0) {
+                    e.preventDefault();
+                    onDropToRemoveFromCurrentFolder(ids);
+                  }
+                  setHoveredKey(null);
+                }}
+                className={`shrink-0 min-h-[42px] inline-flex items-center gap-2 px-4 py-2 rounded-md border text-[13px] font-medium transition-all duration-150 whitespace-nowrap ${
+                  hoveredKey === '__remove__'
+                    ? 'border-[var(--accent)] ring-2 ring-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)] scale-[1.02]'
+                    : 'border-dashed border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-primary)]'
+                }`}
+              >
+                {hoveredKey === '__remove__' ? (
+                  <FolderMinus className="w-4 h-4 shrink-0" />
+                ) : (
+                  <ArrowLeft className="w-4 h-4 shrink-0" />
                 )}
-              </>
+                <span>Remove from &ldquo;{activeFolderRemovalTarget.name}&rdquo;</span>
+              </div>
             )}
 
             {/* Per-View Folders Group */}
             {currentViewFolders.length > 0 && (
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span className="text-[11px] font-medium text-[var(--text-muted)] pr-1 whitespace-nowrap">
+              <>
+                <span className="text-[11px] font-medium text-[var(--text-muted)] px-1 whitespace-nowrap">
                   In {activeViewLabel}:
                 </span>
                 {currentViewFolders.map((vf) => {
@@ -141,31 +132,31 @@ export const FloatingFolderDropDock: React.FC<FloatingFolderDropDockProps> = ({
                         }
                         setHoveredKey(null);
                       }}
-                      className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors whitespace-nowrap ${
+                      className={`shrink-0 min-h-[42px] inline-flex items-center gap-2 px-3.5 py-2 rounded-md border text-[13px] font-medium transition-all duration-150 whitespace-nowrap ${
                         isOver
-                          ? 'border-[var(--accent)] ring-2 ring-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)]'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)]'
+                          ? 'border-[var(--accent)] ring-2 ring-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)] scale-[1.02]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:border-[var(--border-strong)]'
                       }`}
                     >
-                      <Folder className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
-                      <span className="max-w-[140px] truncate">{vf.name}</span>
-                      <span className="font-mono-tabular text-[10px] text-[var(--text-muted)]">
+                      <Folder className="w-4 h-4 text-[var(--accent)] shrink-0" />
+                      <span className="max-w-[180px] truncate">{vf.name}</span>
+                      <span className="font-mono-tabular text-[11px] text-[var(--text-muted)]">
                         {vf.bookIds.length}
                       </span>
                     </div>
                   );
                 })}
-              </div>
+              </>
             )}
 
             {currentViewFolders.length > 0 && flatSidebarFolders.length > 0 && (
-              <div className="h-5 w-px bg-[var(--border-subtle)] shrink-0" />
+              <div className="h-6 w-px bg-[var(--border-subtle)] mx-0.5 shrink-0" />
             )}
 
             {/* Sidebar Library Folders Group */}
             {flatSidebarFolders.length > 0 && (
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span className="text-[11px] font-medium text-[var(--text-muted)] pr-1 whitespace-nowrap">
+              <>
+                <span className="text-[11px] font-medium text-[var(--text-muted)] px-1 whitespace-nowrap">
                   Library:
                 </span>
                 {flatSidebarFolders.map(({folder, pathLabel}) => {
@@ -186,21 +177,21 @@ export const FloatingFolderDropDock: React.FC<FloatingFolderDropDockProps> = ({
                         }
                         setHoveredKey(null);
                       }}
-                      className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors whitespace-nowrap ${
+                      className={`shrink-0 min-h-[42px] inline-flex items-center gap-2 px-3.5 py-2 rounded-md border text-[13px] font-medium transition-all duration-150 whitespace-nowrap ${
                         isOver
-                          ? 'border-[var(--accent)] ring-2 ring-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)]'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)]'
+                          ? 'border-[var(--accent)] ring-2 ring-[var(--accent)] bg-[var(--bg-accent-subtle)] text-[var(--accent)] scale-[1.02]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:border-[var(--border-strong)]'
                       }`}
                     >
                       <Folder
-                        className="w-3.5 h-3.5 shrink-0"
+                        className="w-4 h-4 shrink-0"
                         style={{color: hex ?? 'var(--text-muted)'}}
                       />
-                      <span className="max-w-[140px] truncate">{folder.name}</span>
+                      <span className="max-w-[180px] truncate">{folder.name}</span>
                     </div>
                   );
                 })}
-              </div>
+              </>
             )}
           </div>
         </div>

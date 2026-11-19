@@ -12,9 +12,11 @@ import {
   Info,
   Minus,
   Pencil,
+  Search,
   SlidersHorizontal,
   Star,
   Trash2,
+  X,
 } from 'lucide-react';
 import React, {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {
@@ -109,11 +111,16 @@ export const BookContextMenu: React.FC<BookContextMenuProps> = ({
 
   const [coords, setCoords] = useState<{left: number; top: number}>({left: 0, top: 0});
   const [activeSubmenu, setActiveSubmenu] = useState<SubmenuKind>(null);
-  const [submenuPos, setSubmenuPos] = useState<{left: number; top: number}>({left: 0, top: 0});
+  const [submenuPos, setSubmenuPos] = useState<{left: number; top: number; maxHeight: number}>({
+    left: 0,
+    top: 0,
+    maxHeight: 440,
+  });
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
   const [submenuFocusedIndex, setSubmenuFocusedIndex] = useState<number>(-1);
 
-  // Inline folder creation inside Folders submenu
+  // Search & inline folder creation inside Folders submenu
+  const [folderSearch, setFolderSearch] = useState('');
   const [creatingTarget, setCreatingTarget] = useState<'view' | 'sidebar' | null>(null);
   const [newFolderDraft, setNewFolderDraft] = useState('');
 
@@ -132,6 +139,24 @@ export const BookContextMenu: React.FC<BookContextMenuProps> = ({
     () => flattenFoldersHierarchy(sidebarFolders),
     [sidebarFolders]
   );
+
+  const normalizedFolderQuery = folderSearch.trim().toLowerCase();
+
+  const filteredViewFolders = useMemo(() => {
+    if (!normalizedFolderQuery) return currentViewFolders;
+    return currentViewFolders.filter((vf) =>
+      vf.name.toLowerCase().includes(normalizedFolderQuery)
+    );
+  }, [currentViewFolders, normalizedFolderQuery]);
+
+  const filteredSidebarFolders = useMemo(() => {
+    if (!normalizedFolderQuery) return flatSidebarFolders;
+    return flatSidebarFolders.filter(
+      ({folder, pathLabel}) =>
+        folder.name.toLowerCase().includes(normalizedFolderQuery) ||
+        pathLabel.toLowerCase().includes(normalizedFolderQuery)
+    );
+  }, [flatSidebarFolders, normalizedFolderQuery]);
 
   const isMulti = targetBooks.length > 1;
   const allFavorited = targetBooks.length > 0 && targetBooks.every((b) => b.isFavorite);
@@ -156,11 +181,12 @@ export const BookContextMenu: React.FC<BookContextMenuProps> = ({
     return ids;
   }, [isMulti, activeFolderRemovalName, onRemoveFromCurrentFolder]);
 
-  // Reset submenu & creation state whenever menu opens at new position
+  // Reset submenu, search & creation state whenever menu opens at new position
   useEffect(() => {
     setActiveSubmenu(null);
     setFocusedIndex(-1);
     setSubmenuFocusedIndex(-1);
+    setFolderSearch('');
     setCreatingTarget(null);
     setNewFolderDraft('');
   }, [menuState?.x, menuState?.y, menuState?.primaryBookId]);
@@ -187,7 +213,7 @@ export const BookContextMenu: React.FC<BookContextMenuProps> = ({
     });
   }, [menuState, visibleItemIds.length]);
 
-  // Position cascading submenu with viewport edge flipping
+  // Position cascading submenu with viewport edge flipping and guaranteed scroll-safe maxHeight
   useLayoutEffect(() => {
     if (!activeSubmenu || !menuRef.current || !submenuRef.current) return;
     const triggerKey: MenuItemId = activeSubmenu === 'folders' ? 'folders' : 'status';
@@ -196,20 +222,33 @@ export const BookContextMenu: React.FC<BookContextMenuProps> = ({
     const subRect = submenuRef.current.getBoundingClientRect();
     const triggerRect = triggerEl?.getBoundingClientRect() ?? menuRect;
 
-    const pad = 8;
+    const pad = 10;
     const gap = 4;
+    const maxViewportHeight = Math.max(200, window.innerHeight - pad * 2);
+    const maxHeight = Math.min(460, maxViewportHeight);
+
     let left = menuRect.right + gap;
     if (left + subRect.width > window.innerWidth - pad) {
       left = Math.max(pad, menuRect.left - subRect.width - gap);
     }
 
+    const effectiveHeight = Math.min(subRect.height, maxHeight);
     let top = triggerRect.top - 4;
-    if (top + subRect.height > window.innerHeight - pad) {
-      top = Math.max(pad, window.innerHeight - subRect.height - pad);
+    if (top + effectiveHeight > window.innerHeight - pad) {
+      top = Math.max(pad, window.innerHeight - effectiveHeight - pad);
+    }
+    if (top < pad) {
+      top = pad;
     }
 
-    setSubmenuPos({left, top});
-  }, [activeSubmenu, coords, currentViewFolders.length, flatSidebarFolders.length, creatingTarget]);
+    setSubmenuPos({left, top, maxHeight});
+  }, [
+    activeSubmenu,
+    coords,
+    filteredViewFolders.length,
+    filteredSidebarFolders.length,
+    creatingTarget,
+  ]);
 
   // Close on outside mousedown, window resize, or main container scroll
   useEffect(() => {
@@ -312,13 +351,20 @@ export const BookContextMenu: React.FC<BookContextMenuProps> = ({
   useEffect(() => {
     if (!menuState) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      // Let inline new-folder input handle its own typing
+      // Let inline new-folder or search inputs handle their own typing
       const activeTag = (document.activeElement as HTMLElement | null)?.tagName;
       if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
         if (e.key === 'Escape') {
           e.preventDefault();
-          setCreatingTarget(null);
-          setNewFolderDraft('');
+          if (creatingTarget) {
+            setCreatingTarget(null);
+            setNewFolderDraft('');
+          } else if (folderSearch) {
+            setFolderSearch('');
+          } else {
+            setActiveSubmenu(null);
+            setSubmenuFocusedIndex(-1);
+          }
         }
         return;
       }
@@ -750,7 +796,7 @@ export const BookContextMenu: React.FC<BookContextMenuProps> = ({
         </div>
       </div>
 
-      {/* Cascading Submenu: Folders */}
+      {/* Cascading Submenu: Folders (Scrollable with Sticky Search Filter) */}
       {activeSubmenu === 'folders' && (
         <div
           ref={submenuRef}
@@ -758,10 +804,41 @@ export const BookContextMenu: React.FC<BookContextMenuProps> = ({
           aria-label="Folders submenu"
           onMouseEnter={cancelSubmenuTimer}
           onContextMenu={(e) => e.preventDefault()}
-          className="fixed z-50 w-68 max-h-[75vh] flex flex-col rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-2xl py-1.5 select-none"
-          style={{left: `${submenuPos.left}px`, top: `${submenuPos.top}px`}}
+          className="fixed z-50 w-72 flex flex-col overflow-hidden rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-2xl select-none"
+          style={{
+            left: `${submenuPos.left}px`,
+            top: `${submenuPos.top}px`,
+            maxHeight: `${submenuPos.maxHeight}px`,
+          }}
         >
-          <div className="overflow-y-auto px-1 space-y-2">
+          {/* Sticky Search Filter Bar */}
+          <div className="shrink-0 px-2 pt-2 pb-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
+            <div className="relative flex items-center">
+              <Search className="w-3.5 h-3.5 text-[var(--text-muted)] absolute left-2.5 pointer-events-none" />
+              <input
+                type="text"
+                value={folderSearch}
+                onChange={(e) => setFolderSearch(e.target.value)}
+                onMouseDown={(e) => e.stopPropagation()}
+                placeholder="Search folders..."
+                aria-label="Filter folders"
+                className="w-full pl-8 pr-7 py-1.5 text-xs rounded-md border border-[var(--border-subtle)] bg-[var(--bg-input)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none"
+              />
+              {folderSearch && (
+                <button
+                  type="button"
+                  onClick={() => setFolderSearch('')}
+                  aria-label="Clear folder filter"
+                  className="absolute right-2 p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Scrollable Folder Groups */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-1 py-1.5 space-y-2">
             {/* Per-View Folders */}
             <div>
               <div className="px-2.5 py-1 flex items-center justify-between gap-2">
@@ -807,9 +884,13 @@ export const BookContextMenu: React.FC<BookContextMenuProps> = ({
                 <p className="px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
                   No folders in this view yet.
                 </p>
+              ) : filteredViewFolders.length === 0 ? (
+                <p className="px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
+                  No matching view folders.
+                </p>
               ) : (
                 <div className="space-y-0.5">
-                  {currentViewFolders.map((vf) => {
+                  {filteredViewFolders.map((vf) => {
                     const state = getViewFolderState(vf);
                     return (
                       <button
@@ -882,9 +963,13 @@ export const BookContextMenu: React.FC<BookContextMenuProps> = ({
                 <p className="px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
                   No library folders yet.
                 </p>
+              ) : filteredSidebarFolders.length === 0 ? (
+                <p className="px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
+                  No matching library folders.
+                </p>
               ) : (
                 <div className="space-y-0.5">
-                  {flatSidebarFolders.map(({folder, depth, pathLabel}) => {
+                  {filteredSidebarFolders.map(({folder, depth, pathLabel}) => {
                     const state = getSidebarFolderState(folder.id);
                     return (
                       <button
@@ -898,14 +983,16 @@ export const BookContextMenu: React.FC<BookContextMenuProps> = ({
                           onToggleSidebarFolderMembership(targetIds, folder.id, state !== 'all')
                         }
                         className="w-full py-1.5 pr-2.5 flex items-center justify-between gap-2 text-left text-xs rounded hover:bg-[var(--bg-surface-hover)] focus:bg-[var(--bg-surface-hover)] focus:outline-none cursor-pointer"
-                        style={{paddingLeft: `${10 + depth * 12}px`}}
+                        style={{paddingLeft: `${10 + (normalizedFolderQuery ? 0 : depth) * 12}px`}}
                       >
                         <span className="flex items-center gap-2 min-w-0">
                           <Folder
                             className="w-3.5 h-3.5 shrink-0"
                             style={{color: getFolderColorHex(folder.color) ?? 'var(--text-muted)'}}
                           />
-                          <span className="truncate text-[var(--text-primary)]">{folder.name}</span>
+                          <span className="truncate text-[var(--text-primary)]">
+                            {normalizedFolderQuery ? pathLabel : folder.name}
+                          </span>
                         </span>
                         {renderTriCheck(state)}
                       </button>

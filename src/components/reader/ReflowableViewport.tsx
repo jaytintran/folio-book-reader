@@ -835,6 +835,7 @@ export const ReflowableViewport: React.FC<ReflowableViewportProps> = ({
         /* Continuous Vertical Scroll Viewport */
         <div
           ref={scrollContainerRef}
+          data-folio-vscroll="true"
           onScroll={handleScroll}
           onClick={handleCanvasClick}
           onTouchStart={handleTouchStart}

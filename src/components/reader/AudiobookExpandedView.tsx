@@ -187,7 +187,10 @@ export const AudiobookExpandedView: React.FC<AudiobookExpandedViewProps> = ({
             <span>Tap any line to jump</span>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-5 sm:px-8 py-8 space-y-4">
+          <div
+            data-folio-vscroll="true"
+            className="flex-1 overflow-y-auto px-5 sm:px-8 py-8 space-y-4"
+          >
             {sentences.length === 0 ? (
               <p className="text-center text-sm text-[var(--text-muted)] py-12">
                 No readable text found in this section.

@@ -70,6 +70,7 @@ import {OfflineIndicator} from './components/pwa/OfflineIndicator';
 import {ReaderTabStrip} from './components/reader/ReaderTabStrip';
 import {ReaderView} from './components/reader/ReaderView';
 import {ToastContainer} from './components/ui/ToastContainer';
+import {useKeyboardSmoothScroll} from './hooks/useKeyboardSmoothScroll';
 import {
   requestPersistentLocalStorage,
   useOfflineDesktopPWA,
@@ -228,6 +229,9 @@ export default function App() {
   const [isFoldersOutOfView, setIsFoldersOutOfView] = useState(false);
   const libraryMainRef = useRef<HTMLElement>(null);
   const foldersSentinelRef = useRef<HTMLDivElement>(null);
+
+  // Global desktop smooth continuous WASD scrolling (Library, Reader & Carousels)
+  useKeyboardSmoothScroll(true);
 
   // Backup export / import state
   const [isExportingBackup, setIsExportingBackup] = useState(false);
@@ -2688,6 +2692,7 @@ export default function App() {
           {/* Library Content Viewport */}
           <main
             ref={libraryMainRef}
+            data-folio-vscroll="true"
             onScroll={() => {
               if (contextMenu) setContextMenu(null);
             }}
@@ -3327,7 +3332,7 @@ export default function App() {
         onDeleteBook={(id) => void handleDeleteSingleBook(id)}
       />
 
-      {/* Mobile Organize & Move Sheet (1 or N books) */}
+      {/* Responsive Organize Drawer (Desktop right slide-in / Mobile bottom sheet) */}
       <MobileOrganizeSheet
         isOpen={mobileOrganizeTargetBooks.length > 0}
         targetBooks={mobileOrganizeTargetBooks}
@@ -3337,6 +3342,7 @@ export default function App() {
         categories={categories}
         existingTags={existingTagNames}
         onCreateViewFolder={handleCreateViewFolder}
+        onCreateSidebarFolder={(name) => handleCreateFolder(name)}
         onApply={handleApplyMobileOrganize}
         onClose={() => setMobileOrganizeBookIds(null)}
       />

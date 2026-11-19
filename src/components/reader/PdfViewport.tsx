@@ -735,6 +735,7 @@ export const PdfViewport: React.FC<PdfViewportProps> = ({
     <div className="flex-1 min-w-0 h-full flex flex-col bg-[var(--bg-canvas)] relative overflow-hidden">
       <div
         ref={scrollContainerRef}
+        data-folio-vscroll="true"
         onScroll={handleScroll}
         onClick={handleCanvasClick}
         onTouchStart={handleTouchStart}

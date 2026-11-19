@@ -12,7 +12,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import React, {useRef, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {COVER_PALETTES} from '../../lib/formatters';
 import type {
   BookRecord,
@@ -359,6 +359,7 @@ const FolderCarouselRow: React.FC<CarouselRowProps> = ({
       ) : (
         <div
           ref={scrollerRef}
+          data-folio-carousel="true"
           className="flex items-start gap-4 overflow-x-auto px-4 py-4 scroll-smooth"
         >
           {booksInFolder.map((book) => {
@@ -437,6 +438,344 @@ const FolderCarouselRow: React.FC<CarouselRowProps> = ({
   );
 };
 
+interface FolderGridCardProps {
+  folder: ViewFolderRecord;
+  booksInFolder: BookRecord[];
+  cardLayout: ViewFolderCardLayout;
+  coverSize: CoverSize;
+  isDragOver: boolean;
+  isEditing: boolean;
+  editingName: string;
+  onEditingNameChange: (val: string) => void;
+  onStartRename: () => void;
+  onCommitRename: (e: React.FormEvent) => void;
+  onBlurRename: () => void;
+  onCancelRename: () => void;
+  onOpenFolder: () => void;
+  onRequestAddBooks: () => void;
+  onDeleteFolder: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: (e: React.DragEvent) => void;
+}
+
+const FOLDER_SCROLL_DWELL_MS = 500;
+
+const FolderGridCard: React.FC<FolderGridCardProps> = ({
+  folder,
+  booksInFolder,
+  cardLayout,
+  coverSize,
+  isDragOver,
+  isEditing,
+  editingName,
+  onEditingNameChange,
+  onStartRename,
+  onCommitRename,
+  onBlurRename,
+  onCancelRename,
+  onOpenFolder,
+  onRequestAddBooks,
+  onDeleteFolder,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+}) => {
+  const [dwellPhase, setDwellPhase] = useState<'locked' | 'arming' | 'unlocked'>('locked');
+  const [pulseKey, setPulseKey] = useState(0);
+
+  const isHoveringRef = useRef(false);
+  const dwellTimerRef = useRef<number | null>(null);
+  const settleTimerRef = useRef<number | null>(null);
+  const lastGridScrollAtRef = useRef<number>(0);
+
+  const previewBooks = booksInFolder.slice(0, 3);
+  const cols = resolveGridColumns(cardLayout, booksInFolder.length);
+  const hasOverflow = cardLayout !== 'stacked' && booksInFolder.length > cols * cols;
+
+  const clearTimers = () => {
+    if (dwellTimerRef.current !== null) {
+      window.clearTimeout(dwellTimerRef.current);
+      dwellTimerRef.current = null;
+    }
+    if (settleTimerRef.current !== null) {
+      window.clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    }
+  };
+
+  const startArming = () => {
+    clearTimers();
+    if (!hasOverflow) {
+      setDwellPhase('locked');
+      return;
+    }
+    // Never arm inner hover-scroll on touch/coarse pointer devices
+    if (
+      typeof window !== 'undefined' &&
+      !window.matchMedia('(hover: hover) and (pointer: fine)').matches
+    ) {
+      return;
+    }
+    setPulseKey((k) => k + 1);
+    setDwellPhase('arming');
+    dwellTimerRef.current = window.setTimeout(() => {
+      dwellTimerRef.current = null;
+      if (isHoveringRef.current) {
+        setDwellPhase('unlocked');
+      }
+    }, FOLDER_SCROLL_DWELL_MS);
+  };
+
+  // Reset to locked if layout changes or overflow disappears; clean up timers on unmount
+  useEffect(() => {
+    if (!hasOverflow) {
+      clearTimers();
+      setDwellPhase('locked');
+    }
+    return () => clearTimers();
+  }, [hasOverflow, cardLayout]);
+
+  // If the user scrolls the main canvas while hovering a locked/arming card, reset the 0.5s dwell timer
+  useEffect(() => {
+    if (!hasOverflow || dwellPhase === 'unlocked') return;
+
+    const handleCanvasScrollInterrupt = () => {
+      if (!isHoveringRef.current) return;
+      clearTimers();
+      setDwellPhase('locked');
+      // Once scrolling settles, if the pointer is still resting inside the card, start a fresh 0.5s dwell
+      settleTimerRef.current = window.setTimeout(() => {
+        settleTimerRef.current = null;
+        if (isHoveringRef.current) {
+          startArming();
+        }
+      }, 170);
+    };
+
+    window.addEventListener('wheel', handleCanvasScrollInterrupt, {passive: true});
+    window.addEventListener('scroll', handleCanvasScrollInterrupt, {passive: true, capture: true});
+    return () => {
+      window.removeEventListener('wheel', handleCanvasScrollInterrupt);
+      window.removeEventListener('scroll', handleCanvasScrollInterrupt, {capture: true});
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasOverflow, dwellPhase]);
+
+  const gridColsClass =
+    cols === 1
+      ? 'grid-cols-1 gap-2 p-4 pt-5'
+      : cols === 2
+        ? 'grid-cols-2 gap-2 p-2.5 pt-3.5'
+        : cols === 3
+          ? 'grid-cols-3 gap-1.5 p-2 pt-3'
+          : 'grid-cols-4 gap-1 p-1.5 pt-2.5';
+
+  return (
+    <article
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      className="group flex flex-col min-w-0"
+    >
+      {/* 3:4 Archival Folder Card with Stacked or Hover-Dwell Scrollable Mini Cover Grid */}
+      <div
+        onPointerEnter={(e) => {
+          if (e.pointerType !== 'mouse') return;
+          isHoveringRef.current = true;
+          if (hasOverflow && dwellPhase === 'locked') {
+            startArming();
+          }
+        }}
+        onPointerLeave={() => {
+          isHoveringRef.current = false;
+          clearTimers();
+          setDwellPhase('locked');
+        }}
+        onClick={() => {
+          if (isEditing) return;
+          if (Date.now() - lastGridScrollAtRef.current < 240) return;
+          onOpenFolder();
+        }}
+        className={`relative aspect-[3/4] rounded-[5px] border transition-all duration-150 cursor-pointer flex items-center justify-center overflow-hidden group-hover:-translate-y-0.5 ${
+          isDragOver
+            ? 'border-[var(--accent)] ring-2 ring-[var(--accent)] bg-[var(--bg-accent-subtle)]'
+            : dwellPhase === 'unlocked'
+              ? 'border-[var(--accent)]/60 bg-[var(--bg-surface)]'
+              : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] group-hover:border-[var(--border-strong)]'
+        }`}
+      >
+        {/* Subtle archival folder tab accent across top */}
+        <div
+          aria-hidden="true"
+          className="absolute top-0 left-0 right-0 h-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-subtle)] z-20"
+        />
+
+        {booksInFolder.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 px-4 text-center">
+            <Folder className="w-7 h-7 text-[var(--text-muted)] opacity-60" />
+            <span className="text-[11px] text-[var(--text-muted)]">Drop books here</span>
+          </div>
+        ) : cardLayout === 'stacked' ? (
+          <div className="relative w-[78%] h-[72%] mt-2 flex items-center justify-center">
+            {previewBooks.map((book, idx) => {
+              const total = previewBooks.length;
+              const offsetMap: Record<
+                number,
+                Array<{rotate: string; translate: string; z: string; scale: string}>
+              > = {
+                1: [{rotate: '0deg', translate: '0px, 0px', z: 'z-20', scale: '0.94'}],
+                2: [
+                  {rotate: '-7deg', translate: '-14%, 4%', z: 'z-10', scale: '0.86'},
+                  {rotate: '5deg', translate: '12%, -2%', z: 'z-20', scale: '0.9'},
+                ],
+                3: [
+                  {rotate: '-10deg', translate: '-22%, 7%', z: 'z-10', scale: '0.82'},
+                  {rotate: '9deg', translate: '22%, 5%', z: 'z-20', scale: '0.82'},
+                  {rotate: '0deg', translate: '0px, -3%', z: 'z-30', scale: '0.88'},
+                ],
+              };
+              const layout = offsetMap[total]?.[idx] ?? offsetMap[1][0];
+              return (
+                <div
+                  key={book.id}
+                  className={`absolute w-[64%] shadow-md rounded-[4px] transition-transform duration-200 ${layout.z}`}
+                  style={{
+                    transform: `translate(${layout.translate}) rotate(${layout.rotate}) scale(${layout.scale})`,
+                  }}
+                >
+                  <BookCover
+                    title={book.title}
+                    author={book.author}
+                    format={book.format}
+                    coverDataUrl={book.coverDataUrl}
+                    paletteIndex={book.coverPaletteIndex}
+                    coverStyle={book.coverStyle}
+                    size="sm"
+                  />
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <>
+            {/* Inner Mini-Cover Grid: locked (overflow-y-hidden) until 0.5s dwell unlocks, preserving scrollTop */}
+            <div
+              onScroll={() => {
+                if (dwellPhase === 'unlocked') {
+                  lastGridScrollAtRef.current = Date.now();
+                }
+              }}
+              className={`w-full h-full no-scrollbar ${
+                dwellPhase === 'unlocked'
+                  ? 'overflow-y-auto overscroll-contain'
+                  : 'overflow-y-hidden'
+              }`}
+            >
+              <div className={`grid content-start ${gridColsClass}`}>
+                {booksInFolder.map((book) => (
+                  <FolderMiniCover key={book.id} book={book} cols={cols} />
+                ))}
+              </div>
+            </div>
+
+            {hasOverflow && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-[var(--bg-surface)] via-[var(--bg-surface)]/70 to-transparent z-10"
+              />
+            )}
+
+            {/* Center-Expanding Faded Radial Circular Wave during 0.5s Hover Dwell */}
+            {dwellPhase === 'arming' && (
+              <div
+                key={pulseKey}
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center overflow-hidden"
+              >
+                <div className="w-[165%] aspect-square rounded-full folio-folder-radial-wave" />
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Quick Hover Actions (top-right) */}
+        <div className="absolute top-3 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-40">
+          <button
+            type="button"
+            title="Add books to folder"
+            aria-label={`Add books to ${folder.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRequestAddBooks();
+            }}
+            className="w-6 h-6 rounded flex items-center justify-center bg-[var(--bg-elevated)]/95 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--accent)] cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            title="Rename folder"
+            aria-label={`Rename ${folder.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onStartRename();
+            }}
+            className="w-6 h-6 rounded flex items-center justify-center bg-[var(--bg-elevated)]/95 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+          >
+            <Pencil className="w-3 h-3" />
+          </button>
+          <button
+            type="button"
+            title="Delete folder"
+            aria-label={`Delete ${folder.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDeleteFolder();
+            }}
+            className="w-6 h-6 rounded flex items-center justify-center bg-[var(--bg-elevated)]/95 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+
+      {/* Folder Title & Book Count */}
+      <div className="mt-2.5 min-w-0">
+        {isEditing ? (
+          <form onSubmit={onCommitRename} className="flex items-center gap-1">
+            <input
+              type="text"
+              autoFocus
+              value={editingName}
+              onChange={(e) => onEditingNameChange(e.target.value)}
+              onBlur={onBlurRename}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') onCancelRename();
+              }}
+              className="w-full px-1.5 py-0.5 text-xs rounded border border-[var(--accent)] bg-[var(--bg-input)] text-[var(--text-primary)]"
+            />
+          </form>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpenFolder}
+            className={`text-left w-full font-serif-editorial font-semibold leading-snug text-[var(--text-primary)] hover:text-[var(--accent)] transition-colors line-clamp-2 cursor-pointer ${
+              coverSize === 'compact' ? 'text-[13px]' : 'text-[15px]'
+            }`}
+          >
+            {folder.name}
+          </button>
+        )}
+
+        <p className="mt-0.5 font-mono-tabular text-[11px] text-[var(--text-muted)]">
+          {booksInFolder.length} {booksInFolder.length === 1 ? 'book' : 'books'}
+        </p>
+      </div>
+    </article>
+  );
+};
+
 export const ViewFoldersSection: React.FC<ViewFoldersSectionProps> = ({
   viewLabel,
   viewFolders,
@@ -466,7 +805,6 @@ export const ViewFoldersSection: React.FC<ViewFoldersSectionProps> = ({
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
-  const lastGridScrollAtRef = useRef<number>(0);
 
   const bookById = new Map(viewBooks.map((b) => [b.id, b]));
 
@@ -657,13 +995,33 @@ export const ViewFoldersSection: React.FC<ViewFoldersSectionProps> = ({
               const booksInFolder = folder.bookIds
                 .map((id) => bookById.get(id))
                 .filter((b): b is BookRecord => Boolean(b));
-              const previewBooks = booksInFolder.slice(0, 3);
-              const isDragOver = dragOverFolderId === folder.id;
-              const isEditing = editingFolderId === folder.id;
 
               return (
-                <article
+                <FolderGridCard
                   key={folder.id}
+                  folder={folder}
+                  booksInFolder={booksInFolder}
+                  cardLayout={cardLayout}
+                  coverSize={coverSize}
+                  isDragOver={dragOverFolderId === folder.id}
+                  isEditing={editingFolderId === folder.id}
+                  editingName={editingName}
+                  onEditingNameChange={setEditingName}
+                  onStartRename={() => {
+                    setEditingFolderId(folder.id);
+                    setEditingName(folder.name);
+                  }}
+                  onCommitRename={handleRenameSubmit(folder.id)}
+                  onBlurRename={() => {
+                    if (editingName.trim()) {
+                      onRenameFolder(folder.id, editingName.trim());
+                    }
+                    setEditingFolderId(null);
+                  }}
+                  onCancelRename={() => setEditingFolderId(null)}
+                  onOpenFolder={() => onOpenFolder(folder.id)}
+                  onRequestAddBooks={() => onRequestAddBooks(folder)}
+                  onDeleteFolder={() => onDeleteFolder(folder.id)}
                   onDragOver={(e) => {
                     if (hasBookDragPayload(e.dataTransfer)) {
                       e.preventDefault();
@@ -681,190 +1039,7 @@ export const ViewFoldersSection: React.FC<ViewFoldersSectionProps> = ({
                     }
                     setDragOverFolderId(null);
                   }}
-                  className="group flex flex-col min-w-0"
-                >
-                  {/* 3:4 Archival Folder Card with Stacked or Scrollable Grid Mini Covers */}
-                  <div
-                    onClick={() => {
-                      if (isEditing) return;
-                      if (Date.now() - lastGridScrollAtRef.current < 240) return;
-                      onOpenFolder(folder.id);
-                    }}
-                    className={`relative aspect-[3/4] rounded-[5px] border transition-all duration-150 cursor-pointer flex items-center justify-center overflow-hidden group-hover:-translate-y-0.5 ${
-                      isDragOver
-                        ? 'border-[var(--accent)] ring-2 ring-[var(--accent)] bg-[var(--bg-accent-subtle)]'
-                        : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] group-hover:border-[var(--border-strong)]'
-                    }`}
-                  >
-                    {/* Subtle archival folder tab accent across top */}
-                    <div
-                      aria-hidden="true"
-                      className="absolute top-0 left-0 right-0 h-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-subtle)] z-20"
-                    />
-
-                    {booksInFolder.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center gap-2 px-4 text-center">
-                        <Folder className="w-7 h-7 text-[var(--text-muted)] opacity-60" />
-                        <span className="text-[11px] text-[var(--text-muted)]">
-                          Drop books here
-                        </span>
-                      </div>
-                    ) : cardLayout === 'stacked' ? (
-                      <div className="relative w-[78%] h-[72%] mt-2 flex items-center justify-center">
-                        {previewBooks.map((book, idx) => {
-                          const total = previewBooks.length;
-                          // Fan covers subtly in a neat archival stack
-                          const offsetMap: Record<number, Array<{rotate: string; translate: string; z: string; scale: string}>> = {
-                            1: [{rotate: '0deg', translate: '0px, 0px', z: 'z-20', scale: '0.94'}],
-                            2: [
-                              {rotate: '-7deg', translate: '-14%, 4%', z: 'z-10', scale: '0.86'},
-                              {rotate: '5deg', translate: '12%, -2%', z: 'z-20', scale: '0.9'},
-                            ],
-                            3: [
-                              {rotate: '-10deg', translate: '-22%, 7%', z: 'z-10', scale: '0.82'},
-                              {rotate: '9deg', translate: '22%, 5%', z: 'z-20', scale: '0.82'},
-                              {rotate: '0deg', translate: '0px, -3%', z: 'z-30', scale: '0.88'},
-                            ],
-                          };
-                          const layout = offsetMap[total]?.[idx] ?? offsetMap[1][0];
-                          return (
-                            <div
-                              key={book.id}
-                              className={`absolute w-[64%] shadow-md rounded-[4px] transition-transform duration-200 ${layout.z}`}
-                              style={{
-                                transform: `translate(${layout.translate}) rotate(${layout.rotate}) scale(${layout.scale})`,
-                              }}
-                            >
-                              <BookCover
-                                title={book.title}
-                                author={book.author}
-                                format={book.format}
-                                coverDataUrl={book.coverDataUrl}
-                                paletteIndex={book.coverPaletteIndex}
-                                coverStyle={book.coverStyle}
-                                size="sm"
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      (() => {
-                        const cols = resolveGridColumns(cardLayout, booksInFolder.length);
-                        const gridColsClass =
-                          cols === 1
-                            ? 'grid-cols-1 gap-2 p-4 pt-5'
-                            : cols === 2
-                              ? 'grid-cols-2 gap-2 p-2.5 pt-3.5'
-                              : cols === 3
-                                ? 'grid-cols-3 gap-1.5 p-2 pt-3'
-                                : 'grid-cols-4 gap-1 p-1.5 pt-2.5';
-                        const hasOverflow = booksInFolder.length > cols * cols;
-                        return (
-                          <>
-                            <div
-                              onScroll={() => {
-                                lastGridScrollAtRef.current = Date.now();
-                              }}
-                              className="w-full h-full overflow-y-auto overscroll-contain"
-                            >
-                              <div className={`grid content-start ${gridColsClass}`}>
-                                {booksInFolder.map((book) => (
-                                  <FolderMiniCover key={book.id} book={book} cols={cols} />
-                                ))}
-                              </div>
-                            </div>
-                            {hasOverflow && (
-                              <div
-                                aria-hidden="true"
-                                className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-[var(--bg-surface)] via-[var(--bg-surface)]/70 to-transparent z-10"
-                              />
-                            )}
-                          </>
-                        );
-                      })()
-                    )}
-
-                    {/* Quick Hover Actions (top-right) */}
-                    <div className="absolute top-3 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-40">
-                      <button
-                        type="button"
-                        title="Add books to folder"
-                        aria-label={`Add books to ${folder.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRequestAddBooks(folder);
-                        }}
-                        className="w-6 h-6 rounded flex items-center justify-center bg-[var(--bg-elevated)]/95 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--accent)] cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Rename folder"
-                        aria-label={`Rename ${folder.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingFolderId(folder.id);
-                          setEditingName(folder.name);
-                        }}
-                        className="w-6 h-6 rounded flex items-center justify-center bg-[var(--bg-elevated)]/95 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                      >
-                        <Pencil className="w-3 h-3" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Delete folder"
-                        aria-label={`Delete ${folder.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteFolder(folder.id);
-                        }}
-                        className="w-6 h-6 rounded flex items-center justify-center bg-[var(--bg-elevated)]/95 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Folder Title & Book Count */}
-                  <div className="mt-2.5 min-w-0">
-                    {isEditing ? (
-                      <form onSubmit={handleRenameSubmit(folder.id)} className="flex items-center gap-1">
-                        <input
-                          type="text"
-                          autoFocus
-                          value={editingName}
-                          onChange={(e) => setEditingName(e.target.value)}
-                          onBlur={() => {
-                            if (editingName.trim()) {
-                              onRenameFolder(folder.id, editingName.trim());
-                            }
-                            setEditingFolderId(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') setEditingFolderId(null);
-                          }}
-                          className="w-full px-1.5 py-0.5 text-xs rounded border border-[var(--accent)] bg-[var(--bg-input)] text-[var(--text-primary)]"
-                        />
-                      </form>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => onOpenFolder(folder.id)}
-                        className={`text-left w-full font-serif-editorial font-semibold leading-snug text-[var(--text-primary)] hover:text-[var(--accent)] transition-colors line-clamp-2 cursor-pointer ${
-                          coverSize === 'compact' ? 'text-[13px]' : 'text-[15px]'
-                        }`}
-                      >
-                        {folder.name}
-                      </button>
-                    )}
-
-                    <p className="mt-0.5 font-mono-tabular text-[11px] text-[var(--text-muted)]">
-                      {booksInFolder.length} {booksInFolder.length === 1 ? 'book' : 'books'}
-                    </p>
-                  </div>
-                </article>
+                />
               );
             })}
           </div>
