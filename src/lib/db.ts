@@ -113,6 +113,28 @@ export interface RestoreResultSummary {
   highlightsRestored: number;
 }
 
+export interface BookFileAuditEntry {
+  bookId: string;
+  byteLength: number;
+  mimeType: string;
+  sha256: string | null;
+}
+
+async function computeArrayBufferSha256(buffer: ArrayBuffer): Promise<string | null> {
+  try {
+    if (typeof crypto === 'undefined' || !crypto.subtle) return null;
+    const digest = await crypto.subtle.digest('SHA-256', buffer);
+    const bytes = new Uint8Array(digest);
+    let hex = '';
+    for (let i = 0; i < bytes.length; i++) {
+      hex += bytes[i].toString(16).padStart(2, '0');
+    }
+    return hex;
+  } catch {
+    return null;
+  }
+}
+
 export const libraryDb = {
   async getAllBooks(): Promise<BookRecord[]> {
     const db = await openDB();
@@ -125,6 +147,42 @@ export const libraryDb = {
     const db = await openDB();
     const tx = db.transaction(STORES.files, 'readonly');
     return reqToPromise<BookFileBlob[]>(tx.objectStore(STORES.files).getAll());
+  },
+
+  async getAllBookFileKeys(): Promise<string[]> {
+    const db = await openDB();
+    const tx = db.transaction(STORES.files, 'readonly');
+    const keys = await reqToPromise<IDBValidKey[]>(tx.objectStore(STORES.files).getAllKeys());
+    return keys.filter((k): k is string => typeof k === 'string');
+  },
+
+  async auditStorageFiles(): Promise<BookFileAuditEntry[]> {
+    const keys = await this.getAllBookFileKeys();
+    const entries: BookFileAuditEntry[] = [];
+    // Read and hash one binary at a time to keep memory usage bounded
+    for (const bookId of keys) {
+      const fileBlob = await this.getBookFile(bookId);
+      if (!fileBlob) continue;
+      const sha256 = await computeArrayBufferSha256(fileBlob.data);
+      entries.push({
+        bookId,
+        byteLength: fileBlob.data.byteLength,
+        mimeType: fileBlob.mimeType,
+        sha256,
+      });
+    }
+    return entries;
+  },
+
+  async deleteOrphanBookFiles(bookIds: string[]): Promise<void> {
+    if (bookIds.length === 0) return;
+    const db = await openDB();
+    const tx = db.transaction(STORES.files, 'readwrite');
+    const store = tx.objectStore(STORES.files);
+    for (const id of bookIds) {
+      store.delete(id);
+    }
+    await txDone(tx);
   },
 
   async saveBookWithFile(book: BookRecord, file: BookFileBlob): Promise<void> {

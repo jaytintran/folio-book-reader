@@ -40,6 +40,7 @@ export const DEFAULT_LIBRARY_PREFERENCES: LibraryPreferences = {
   coverSize: 'standard',
   groupBy: 'none',
   cardDetails: {
+    subtitle: true,
     author: true,
     format: true,
     category: true,

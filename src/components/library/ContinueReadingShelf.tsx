@@ -129,6 +129,14 @@ export const ContinueReadingShelf: React.FC<ContinueReadingShelfProps> = ({
                     >
                       {book.title}
                     </button>
+                    {book.subtitle?.trim() && (
+                      <p
+                        className="text-[11px] text-[var(--text-secondary)] truncate leading-tight mt-0.5"
+                        title={book.subtitle}
+                      >
+                        {book.subtitle}
+                      </p>
+                    )}
                     <p className="text-[11px] text-[var(--text-secondary)] truncate mt-0.5">
                       {book.currentLocation?.label || book.author}
                     </p>

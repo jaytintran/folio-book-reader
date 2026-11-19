@@ -176,6 +176,11 @@ export const BookInspector: React.FC<BookInspectorProps> = ({
           <h2 className="mt-4 font-serif-editorial text-base font-semibold leading-snug text-[var(--text-primary)]">
             {book.title}
           </h2>
+          {book.subtitle?.trim() && (
+            <p className="mt-1 text-xs text-[var(--text-secondary)] leading-snug line-clamp-2">
+              {book.subtitle}
+            </p>
+          )}
           <p className="mt-1 text-xs text-[var(--text-secondary)]">{book.author}</p>
 
           <div className="mt-1.5 flex items-center justify-center gap-1.5 text-[11px] text-[var(--text-muted)] font-mono-tabular">

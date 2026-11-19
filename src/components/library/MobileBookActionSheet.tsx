@@ -80,6 +80,11 @@ export const MobileBookActionSheet: React.FC<MobileBookActionSheetProps> = ({
           <h2 className="font-serif-editorial text-base font-semibold text-[var(--text-primary)] line-clamp-2 leading-snug">
             {book.title}
           </h2>
+          {book.subtitle?.trim() && (
+            <p className="text-xs text-[var(--text-secondary)] truncate mt-0.5">
+              {book.subtitle}
+            </p>
+          )}
           <p className="text-xs text-[var(--text-secondary)] truncate mt-0.5">{book.author}</p>
           <p className="text-[11px] text-[var(--text-muted)] font-mono-tabular uppercase mt-0.5">
             {book.format} · {progressText}

@@ -962,11 +962,19 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             </button>
           </div>
 
-          {/* Center: Book Title */}
+          {/* Center: Book Title & Subtitle */}
           <div className="min-w-0 flex-1 text-center">
-            <div className="font-serif-editorial text-sm font-semibold text-[var(--text-primary)] truncate">
+            <div className="font-serif-editorial text-sm font-semibold leading-tight text-[var(--text-primary)] truncate">
               {book.title}
             </div>
+            {book.subtitle?.trim() && (
+              <div
+                className="text-[11px] leading-tight text-[var(--text-secondary)] truncate"
+                title={book.subtitle}
+              >
+                {book.subtitle}
+              </div>
+            )}
           </div>
 
           {/* Right: Layout Switch, Study Pane, Bookmark, Typography, Theme, Pin Header */}

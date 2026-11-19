@@ -284,6 +284,15 @@ export const BookGrid: React.FC<BookGridProps> = ({
                 {book.title}
               </button>
 
+              {cardDetails.subtitle && book.subtitle?.trim() && (
+                <p
+                  className="mt-0.5 text-xs text-[var(--text-secondary)] line-clamp-1"
+                  title={book.subtitle}
+                >
+                  {book.subtitle}
+                </p>
+              )}
+
               {cardDetails.author && (
                 <p className="mt-1 text-xs text-[var(--text-secondary)] truncate">{book.author}</p>
               )}

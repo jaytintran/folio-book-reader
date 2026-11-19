@@ -426,6 +426,14 @@ const FolderCarouselRow: React.FC<CarouselRowProps> = ({
                 >
                   {book.title}
                 </button>
+                {book.subtitle?.trim() && (
+                  <p
+                    className="mt-0.5 text-[11px] text-[var(--text-secondary)] truncate"
+                    title={book.subtitle}
+                  >
+                    {book.subtitle}
+                  </p>
+                )}
                 <p className="mt-0.5 text-[11px] text-[var(--text-muted)] truncate">
                   {book.author}
                 </p>

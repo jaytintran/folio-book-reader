@@ -71,6 +71,7 @@ export const DisplayOptionsPopover: React.FC<DisplayOptionsPopoverProps> = ({
         <div className="space-y-1.5">
           {(
             [
+              {key: 'subtitle', label: 'Subtitle'},
               {key: 'author', label: 'Author name'},
               {key: 'format', label: 'File format (EPUB, PDF, MOBI)'},
               {key: 'category', label: 'Category label'},

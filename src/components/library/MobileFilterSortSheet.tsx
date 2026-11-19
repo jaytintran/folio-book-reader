@@ -50,6 +50,7 @@ const GROUP_OPTIONS: Array<{id: GroupByField; label: string}> = [
 ];
 
 const DETAIL_TOGGLES: Array<{key: keyof CardDetailOptions; label: string}> = [
+  {key: 'subtitle', label: 'Subtitle'},
   {key: 'author', label: 'Author'},
   {key: 'format', label: 'Format'},
   {key: 'category', label: 'Category'},

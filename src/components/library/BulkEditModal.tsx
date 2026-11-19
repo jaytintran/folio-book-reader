@@ -32,6 +32,7 @@ export interface BulkEditPatch {
   removeSidebarFolderIds: string[];
   addTags: string[];
   removeTags: string[];
+  subtitle?: string;
   author?: string;
   series?: string;
   publisher?: string;
@@ -121,6 +122,8 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
   const [newTagInput, setNewTagInput] = useState('');
 
   // Metadata fields (tracked with dirty flags so untouched fields are never overwritten)
+  const [subtitleValue, setSubtitleValue] = useState('');
+  const [subtitleDirty, setSubtitleDirty] = useState(false);
   const [authorValue, setAuthorValue] = useState('');
   const [authorDirty, setAuthorDirty] = useState(false);
   const [seriesValue, setSeriesValue] = useState('');
@@ -195,6 +198,10 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
   }, [existingTags, selectedBooks, customAddedTags, selectedCount]);
 
   // Shared metadata placeholders
+  const subtitleMeta = useMemo(
+    () => getSharedFieldValue(selectedBooks, (b) => b.subtitle ?? ''),
+    [selectedBooks]
+  );
   const authorMeta = useMemo(
     () => getSharedFieldValue(selectedBooks, (b) => b.author),
     [selectedBooks]
@@ -289,6 +296,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
     removeSidebarFolderIds.length > 0;
   const tagsDirty = addTags.length > 0 || removeTags.length > 0;
   const metadataDirty =
+    subtitleDirty ||
     authorDirty ||
     seriesDirty ||
     publisherDirty ||
@@ -312,6 +320,9 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
     }
     if (removeTags.length > 0) {
       items.push(`-${removeTags.length} ${removeTags.length === 1 ? 'tag' : 'tags'}`);
+    }
+    if (subtitleDirty) {
+      items.push(subtitleValue.trim() ? `Subtitle → ${subtitleValue.trim()}` : 'Clear Subtitle');
     }
     if (authorDirty && authorValue.trim()) {
       items.push(`Author → ${authorValue.trim()}`);
@@ -350,6 +361,8 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
     removeSidebarFolderIds.length,
     addTags.length,
     removeTags.length,
+    subtitleDirty,
+    subtitleValue,
     authorDirty,
     authorValue,
     seriesDirty,
@@ -379,6 +392,8 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
   };
 
   const resetMetadata = () => {
+    setSubtitleValue('');
+    setSubtitleDirty(false);
     setAuthorValue('');
     setAuthorDirty(false);
     setSeriesValue('');
@@ -462,6 +477,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
       removeSidebarFolderIds,
       addTags,
       removeTags,
+      ...(subtitleDirty ? {subtitle: subtitleValue.trim()} : {}),
       ...(authorDirty && authorValue.trim() ? {author: authorValue.trim()} : {}),
       ...(seriesDirty ? {series: seriesValue.trim()} : {}),
       ...(publisherDirty ? {publisher: publisherValue.trim()} : {}),
@@ -987,6 +1003,43 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
               </div>
 
               <div className="space-y-3">
+                {/* Subtitle */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-medium text-[var(--text-secondary)]">
+                      Subtitle
+                    </label>
+                    {subtitleDirty && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSubtitleValue('');
+                          setSubtitleDirty(false);
+                        }}
+                        className="text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                      >
+                        Keep existing
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={subtitleDirty ? subtitleValue : ''}
+                    onChange={(e) => {
+                      setSubtitleValue(e.target.value);
+                      setSubtitleDirty(true);
+                    }}
+                    placeholder={
+                      subtitleMeta.isMixed
+                        ? 'Mixed subtitles (keep existing)'
+                        : subtitleMeta.shared || 'No subtitle (leave empty to keep)'
+                    }
+                    className={`w-full px-3 py-2 text-xs rounded-md border bg-[var(--bg-input)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${
+                      subtitleDirty ? 'border-[var(--accent)]' : 'border-[var(--border-strong)]'
+                    }`}
+                  />
+                </div>
+
                 {/* Author */}
                 <div>
                   <div className="flex items-center justify-between mb-1">

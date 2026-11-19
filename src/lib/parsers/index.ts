@@ -57,6 +57,7 @@ export async function importBookFile(
   const book: BookRecord = {
     id,
     title: meta.title || fallbackTitle,
+    subtitle: '',
     author: meta.author || 'Unknown Author',
     format,
     fileName: file.name,

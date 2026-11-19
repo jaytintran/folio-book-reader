@@ -212,3 +212,32 @@ export async function compressCoverImageToDataUrl(file: File): Promise<string> {
     URL.revokeObjectURL(objectUrl);
   }
 }
+
+export function splitFileName(
+  fileName: string,
+  fallbackFormat: BookRecord['format']
+): {baseName: string; extension: string} {
+  const trimmed = fileName.trim();
+  const lastDot = trimmed.lastIndexOf('.');
+  if (lastDot > 0 && lastDot < trimmed.length - 1) {
+    const ext = trimmed.slice(lastDot);
+    if (/^\.[a-z0-9]{1,8}$/i.test(ext)) {
+      return {
+        baseName: trimmed.slice(0, lastDot),
+        extension: ext,
+      };
+    }
+  }
+  return {
+    baseName: trimmed || 'book',
+    extension: `.${fallbackFormat}`,
+  };
+}
+
+export function sanitizeFileBaseName(raw: string): string {
+  return raw
+    .replace(/[\\/:*?"<>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+

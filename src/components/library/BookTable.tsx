@@ -199,17 +199,27 @@ export const BookTable: React.FC<BookTableProps> = ({
                       size="sm"
                       className="w-6 shrink-0"
                     />
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (inspectorOpen) onInspectBook(book);
-                        else onOpenBook(book);
-                      }}
-                      className="font-serif-editorial text-sm font-medium text-[var(--text-primary)] hover:text-[var(--accent)] truncate text-left cursor-pointer"
-                    >
-                      {book.title}
-                    </button>
+                    <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (inspectorOpen) onInspectBook(book);
+                          else onOpenBook(book);
+                        }}
+                        className="block w-full font-serif-editorial text-sm font-medium text-[var(--text-primary)] hover:text-[var(--accent)] truncate text-left cursor-pointer"
+                      >
+                        {book.title}
+                      </button>
+                      {book.subtitle?.trim() && (
+                        <p
+                          className="text-[11px] text-[var(--text-secondary)] truncate leading-snug"
+                          title={book.subtitle}
+                        >
+                          {book.subtitle}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </td>
 

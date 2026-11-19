@@ -2,6 +2,7 @@ import {
   BookOpen,
   CornerDownLeft,
   Folder,
+  HardDrive,
   Highlighter,
   Moon,
   PanelRight,
@@ -12,7 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {flattenFoldersHierarchy} from '../../lib/formatters';
+import {flattenFoldersHierarchy, formatFileSize} from '../../lib/formatters';
 import type {
   BookRecord,
   CategoryRecord,
@@ -36,6 +37,7 @@ interface CommandPaletteProps {
   onSelectCategory: (categoryId: string) => void;
   onOpenHighlightsHub: () => void;
   onImportBooks: () => void;
+  onOpenStorageManager: () => void;
   onToggleTheme: () => void;
   onToggleInspector: () => void;
 }
@@ -64,6 +66,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onSelectCategory,
   onOpenHighlightsHub,
   onImportBooks,
+  onOpenStorageManager,
   onToggleTheme,
   onToggleInspector,
 }) => {
@@ -90,7 +93,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     const matchedBooks = books
       .filter((b) => {
         if (!q) return true;
-        const hay = `${b.title} ${b.author} ${b.series} ${b.tags.join(' ')}`.toLowerCase();
+        const hay = `${b.title} ${b.subtitle ?? ''} ${b.author} ${b.series} ${b.tags.join(' ')}`.toLowerCase();
         return hay.includes(q);
       })
       .sort((a, b) => (b.lastReadAt ?? b.addedAt) - (a.lastReadAt ?? a.addedAt))
@@ -101,7 +104,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         id: `book-${book.id}`,
         section: 'Books',
         title: book.title,
-        subtitle: `${book.author} · ${book.format.toUpperCase()} · ${book.progress}%`,
+        subtitle: [
+          book.subtitle?.trim(),
+          book.author,
+          book.format.toUpperCase(),
+          `${book.progress}%`,
+        ]
+          .filter(Boolean)
+          .join(' · '),
         book,
         onExecute: () => {
           onOpenBook(book);
@@ -206,6 +216,19 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         },
       },
       {
+        id: 'action-storage',
+        section: 'Actions',
+        title: 'Manage storage & book files',
+        subtitle: `${books.length} ${books.length === 1 ? 'book' : 'books'} · ${formatFileSize(
+          books.reduce((sum, b) => sum + (b.fileSize || 0), 0)
+        )} · Replace files or find duplicates`,
+        icon: <HardDrive className="w-4 h-4 text-[var(--text-secondary)]" />,
+        onExecute: () => {
+          onClose();
+          onOpenStorageManager();
+        },
+      },
+      {
         id: 'action-theme',
         section: 'Actions',
         title: `Switch to ${theme === 'sepia' ? 'Dark' : 'Sepia'} theme`,
@@ -244,6 +267,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     onSelectCategory,
     onOpenHighlightsHub,
     onImportBooks,
+    onOpenStorageManager,
     onToggleTheme,
     onToggleInspector,
     onClose,

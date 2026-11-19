@@ -21,6 +21,7 @@ export type ViewFolderDisplayMode = 'card' | 'carousel';
 export type ViewFolderCardLayout = 'stacked' | 'auto' | '2x2' | '3x3' | '4x4';
 
 export interface CardDetailOptions {
+  subtitle: boolean;
   author: boolean;
   format: boolean;
   category: boolean;
@@ -72,6 +73,7 @@ export interface BookLocation {
 export interface BookRecord {
   id: string;
   title: string;
+  subtitle?: string;
   author: string;
   format: BookFormat;
   fileName: string;

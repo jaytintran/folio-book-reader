@@ -1,11 +1,13 @@
-import {Check, Folder, Plus, Trash2, X} from 'lucide-react';
-import React, {useMemo, useState} from 'react';
+import {Check, FileUp, Folder, Plus, Trash2, X} from 'lucide-react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   flattenFoldersHierarchy,
   formatFileSize,
   formatShortDate,
   getBookFolderIds,
   getFolderColorHex,
+  sanitizeFileBaseName,
+  splitFileName,
   withBookFolderIds,
 } from '../../lib/formatters';
 import type {
@@ -24,6 +26,7 @@ interface MetadataDrawerProps {
   categories: CategoryRecord[];
   existingTags: string[];
   onSave: (updated: BookRecord) => void;
+  onReplaceFile: (bookId: string, file: File) => Promise<void>;
   onDelete: (bookId: string) => void;
   onCreateFolder: (name: string) => Promise<FolderRecord>;
   onCreateCategory: (name: string) => Promise<CategoryRecord>;
@@ -36,12 +39,20 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
   categories,
   existingTags,
   onSave,
+  onReplaceFile,
   onDelete,
   onCreateFolder,
   onCreateCategory,
   onClose,
 }) => {
+  const initialFileParts = useMemo(
+    () => splitFileName(book.fileName, book.format),
+    [book.fileName, book.format]
+  );
+
   const [title, setTitle] = useState(book.title);
+  const [subtitle, setSubtitle] = useState(book.subtitle ?? '');
+  const [fileBaseName, setFileBaseName] = useState(initialFileParts.baseName);
   const [author, setAuthor] = useState(book.author);
   const [series, setSeries] = useState(book.series);
   const [publisher, setPublisher] = useState(book.publisher);
@@ -63,6 +74,18 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
   const [showQuickFolder, setShowQuickFolder] = useState(false);
   const [quickCategory, setQuickCategory] = useState('');
   const [showQuickCategory, setShowQuickCategory] = useState(false);
+  const [isReplacingFile, setIsReplacingFile] = useState(false);
+  const replaceFileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setFileBaseName(initialFileParts.baseName);
+  }, [initialFileParts.baseName]);
+
+  useEffect(() => {
+    if (!coverDataUrl && book.coverDataUrl) {
+      setCoverDataUrl(book.coverDataUrl);
+    }
+  }, [book.coverDataUrl, coverDataUrl]);
 
   const flatFolders = useMemo(() => flattenFoldersHierarchy(folders), [folders]);
 
@@ -98,11 +121,16 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
     const updatedProgress =
       status === 'finished' ? 100 : status === 'unread' ? 0 : Math.max(1, book.progress);
 
+    const cleanBaseName = sanitizeFileBaseName(fileBaseName) || initialFileParts.baseName;
+    const nextFileName = `${cleanBaseName}${initialFileParts.extension}`;
+
     onSave(
       withBookFolderIds(
         {
           ...book,
           title: title.trim() || book.title,
+          subtitle: subtitle.trim(),
+          fileName: nextFileName,
           author: author.trim() || 'Unknown Author',
           series: series.trim(),
           publisher: publisher.trim(),
@@ -171,14 +199,66 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
                   coverStyle={coverStyle}
                 />
               </div>
-              <div className="flex-1 min-w-0 text-xs text-[var(--text-secondary)] space-y-1">
-                <p className="truncate font-medium text-[var(--text-primary)]" title={book.fileName}>
-                  {book.fileName}
-                </p>
+              <div className="flex-1 min-w-0 text-xs text-[var(--text-secondary)] space-y-2">
+                <div>
+                  <label
+                    htmlFor="metadata-file-base-name"
+                    className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1"
+                  >
+                    File Name
+                  </label>
+                  <div className="flex items-stretch rounded-md border border-[var(--border-strong)] bg-[var(--bg-input)] focus-within:border-[var(--accent)] overflow-hidden">
+                    <input
+                      id="metadata-file-base-name"
+                      type="text"
+                      required
+                      value={fileBaseName}
+                      onChange={(e) => setFileBaseName(e.target.value)}
+                      placeholder={initialFileParts.baseName}
+                      aria-label="Book file base name"
+                      className="flex-1 min-w-0 px-2.5 py-1.5 text-xs bg-transparent text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
+                    />
+                    <span
+                      title="File extension is locked to preserve format compatibility"
+                      className="inline-flex items-center px-2 py-1.5 text-[11px] font-mono-tabular text-[var(--text-muted)] bg-[var(--bg-surface)] border-l border-[var(--border-subtle)] select-none shrink-0"
+                    >
+                      {initialFileParts.extension}
+                    </span>
+                  </div>
+                </div>
                 <p className="font-mono-tabular text-[11px] text-[var(--text-muted)]">
                   {book.format.toUpperCase()} · {formatFileSize(book.fileSize)} · Added{' '}
                   {formatShortDate(book.addedAt)}
                 </p>
+                <div className="pt-0.5">
+                  <input
+                    ref={replaceFileInputRef}
+                    type="file"
+                    accept=".pdf,.epub,.mobi,.prc,.azw"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) return;
+                      setIsReplacingFile(true);
+                      try {
+                        await onReplaceFile(book.id, file);
+                      } finally {
+                        setIsReplacingFile(false);
+                      }
+                    }}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={isReplacingFile}
+                    onClick={() => replaceFileInputRef.current?.click()}
+                    title="Swap with a smaller EPUB or compressed PDF while preserving metadata, bookmarks, and highlights"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] hover:border-[var(--accent)] disabled:opacity-55 transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    <FileUp className="w-3 h-3 text-[var(--accent)] shrink-0" />
+                    <span>{isReplacingFile ? 'Replacing File…' : 'Replace File'}</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -189,6 +269,7 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
               coverDataUrl={coverDataUrl}
               coverPaletteIndex={coverPaletteIndex}
               coverStyle={coverStyle}
+              collapsibleGenerated
               onChange={(patch) => {
                 if ('coverDataUrl' in patch) setCoverDataUrl(patch.coverDataUrl ?? null);
                 if (patch.coverPaletteIndex !== undefined)
@@ -198,7 +279,7 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
             />
           </div>
 
-          {/* Title & Author */}
+          {/* Title, Subtitle & Author */}
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
@@ -210,6 +291,19 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="w-full px-3 py-2 text-sm rounded-md border border-[var(--border-strong)] bg-[var(--bg-input)] text-[var(--text-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+                Subtitle
+              </label>
+              <input
+                type="text"
+                value={subtitle}
+                onChange={(e) => setSubtitle(e.target.value)}
+                placeholder="Optional subtitle"
+                className="w-full px-3 py-2 text-sm rounded-md border border-[var(--border-strong)] bg-[var(--bg-input)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
               />
             </div>
 

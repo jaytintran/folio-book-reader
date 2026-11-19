@@ -1,11 +1,12 @@
 import {Check, MoreHorizontal, Star} from 'lucide-react';
 import React from 'react';
-import type {BookRecord, CategoryRecord} from '../../types/library';
+import type {BookRecord, CardDetailOptions, CategoryRecord} from '../../types/library';
 import {BookCover} from './BookCover';
 
 interface MobileBookListProps {
   books: BookRecord[];
   categories: CategoryRecord[];
+  cardDetails: CardDetailOptions;
   selectedIds: Set<string>;
   isSelectionMode: boolean;
   onOpenBook: (book: BookRecord) => void;
@@ -16,6 +17,7 @@ interface MobileBookListProps {
 export const MobileBookList: React.FC<MobileBookListProps> = ({
   books,
   categories,
+  cardDetails,
   selectedIds,
   isSelectionMode,
   onOpenBook,
@@ -92,6 +94,12 @@ export const MobileBookList: React.FC<MobileBookListProps> = ({
                   <Star className="w-3.5 h-3.5 fill-[var(--accent)] text-[var(--accent)] shrink-0 mt-0.5" />
                 )}
               </div>
+
+              {cardDetails.subtitle && book.subtitle?.trim() && (
+                <p className="text-xs text-[var(--text-secondary)] truncate mt-0.5">
+                  {book.subtitle}
+                </p>
+              )}
 
               <p className="text-xs text-[var(--text-secondary)] truncate mt-0.5">{book.author}</p>
 

@@ -65,6 +65,7 @@ import {
   MobileOrganizeSheet,
   type MobileOrganizePayload,
 } from './components/library/MobileOrganizeSheet';
+import {StorageManagerModal} from './components/library/StorageManagerModal';
 import {ViewFoldersSection} from './components/library/ViewFoldersSection';
 import {OfflineIndicator} from './components/pwa/OfflineIndicator';
 import {ReaderTabStrip} from './components/reader/ReaderTabStrip';
@@ -84,6 +85,7 @@ import {
 import {libraryDb} from './lib/db';
 import {
   flattenFoldersHierarchy,
+  formatFileSize,
   getBookFolderIds,
   getFolderColorHex,
   getFolderDescendantIds,
@@ -199,8 +201,9 @@ export default function App() {
   const [displayPopoverOpen, setDisplayPopoverOpen] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
-  // Book Inspector & Command Palette
+  // Book Inspector, Storage Manager & Command Palette
   const [inspectedBookId, setInspectedBookId] = useState<string | null>(null);
+  const [storageManagerOpen, setStorageManagerOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   // Selection & Overlays
@@ -417,6 +420,7 @@ export default function App() {
       if (q) {
         const haystack = [
           book.title,
+          book.subtitle ?? '',
           book.author,
           book.series,
           book.publisher,
@@ -836,6 +840,7 @@ export default function App() {
           const newBook: BookRecord = {
             id,
             title: item.metadata.title,
+            subtitle: '',
             author: item.metadata.author,
             format: item.metadata.format,
             fileName: item.file.name,
@@ -1063,6 +1068,95 @@ export default function App() {
       await handleUpdateBook(updated);
     },
     [handleUpdateBook]
+  );
+
+  const handleReplaceBookFile = useCallback(
+    async (bookId: string, file: File) => {
+      const existing = books.find((b) => b.id === bookId);
+      if (!existing) return;
+
+      try {
+        const {book: parsedMeta, blob} = await importBookFile(file);
+        const nextFormat = parsedMeta.format;
+        const nextTotalUnits = Math.max(1, parsedMeta.totalUnits);
+
+        let nextUnitIndex = existing.currentLocation.unitIndex;
+        let nextScrollRatio = existing.currentLocation.scrollRatio;
+        let nextLabel = existing.currentLocation.label;
+
+        if (nextFormat === existing.format) {
+          const minUnit = nextFormat === 'pdf' ? 1 : 0;
+          const maxUnit = nextFormat === 'pdf' ? nextTotalUnits : Math.max(0, nextTotalUnits - 1);
+          nextUnitIndex = Math.min(Math.max(minUnit, nextUnitIndex), maxUnit);
+        } else {
+          const ratio = Math.max(0, Math.min(1, existing.progress / 100));
+          nextUnitIndex =
+            nextFormat === 'pdf'
+              ? Math.max(1, Math.min(nextTotalUnits, Math.round(ratio * nextTotalUnits) || 1))
+              : Math.max(
+                  0,
+                  Math.min(
+                    Math.max(0, nextTotalUnits - 1),
+                    Math.round(ratio * Math.max(0, nextTotalUnits - 1))
+                  )
+                );
+          nextScrollRatio = 0;
+          nextLabel = undefined;
+        }
+
+        const updatedBook: BookRecord = {
+          ...existing,
+          format: nextFormat,
+          fileName: file.name,
+          fileSize: file.size,
+          totalUnits: nextTotalUnits,
+          coverDataUrl: existing.coverDataUrl ?? parsedMeta.coverDataUrl,
+          publisher: existing.publisher || parsedMeta.publisher,
+          year: existing.year || parsedMeta.year,
+          language: existing.language || parsedMeta.language,
+          description: existing.description || parsedMeta.description,
+          currentLocation: {
+            unitIndex: nextUnitIndex,
+            scrollRatio: nextScrollRatio,
+            label: nextLabel,
+          },
+        };
+
+        const updatedBlob: BookFileBlob = {
+          bookId: existing.id,
+          data: blob.data,
+          mimeType: blob.mimeType,
+        };
+
+        await libraryDb.saveBookWithFile(updatedBook, updatedBlob);
+        setBooks((prev) => prev.map((b) => (b.id === updatedBook.id ? updatedBook : b)));
+
+        const prevSize = existing.fileSize || 0;
+        const deltaDetail =
+          prevSize > 0
+            ? file.size < prevSize
+              ? `${formatFileSize(prevSize)} → ${formatFileSize(file.size)} (saved ${formatFileSize(prevSize - file.size)})`
+              : `${formatFileSize(prevSize)} → ${formatFileSize(file.size)}`
+            : formatFileSize(file.size);
+        const formatNote =
+          nextFormat !== existing.format
+            ? ` · ${existing.format.toUpperCase()} → ${nextFormat.toUpperCase()}`
+            : '';
+
+        notify(
+          `Replaced file for "${updatedBook.title}"`,
+          'success',
+          `${deltaDetail}${formatNote} · Metadata & notes preserved`
+        );
+      } catch (err) {
+        notify(
+          'Could not replace book file',
+          'error',
+          err instanceof Error ? err.message : `Failed to process ${file.name}`
+        );
+      }
+    },
+    [books, notify]
   );
 
   // Extended Drag-and-Drop Handlers (single or multi-selected books)
@@ -1633,6 +1727,7 @@ export default function App() {
         patch.removeSidebarFolderIds.length > 0 ||
         patch.addTags.length > 0 ||
         patch.removeTags.length > 0 ||
+        patch.subtitle !== undefined ||
         patch.author !== undefined ||
         patch.series !== undefined ||
         patch.publisher !== undefined ||
@@ -1689,6 +1784,7 @@ export default function App() {
           return withBookFolderIds(
             {
               ...book,
+              ...(patch.subtitle !== undefined ? {subtitle: patch.subtitle} : {}),
               ...(patch.author !== undefined ? {author: patch.author} : {}),
               ...(patch.series !== undefined ? {series: patch.series} : {}),
               ...(patch.publisher !== undefined ? {publisher: patch.publisher} : {}),
@@ -1979,39 +2075,47 @@ export default function App() {
     );
   }, [books, selectedIds, notify]);
 
+  const deleteBooksFromLibrary = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return;
+      await libraryDb.deleteBooks(ids);
+      const idSet = new Set(ids);
+      setBooks((prev) => prev.filter((b) => !idSet.has(b.id)));
+      setViewFolders((prev) =>
+        prev.map((vf) =>
+          vf.bookIds.some((id) => idSet.has(id))
+            ? {...vf, bookIds: vf.bookIds.filter((id) => !idSet.has(id))}
+            : vf
+        )
+      );
+      setAllHighlights((prev) => prev.filter((h) => !idSet.has(h.bookId)));
+      setAllBookmarks((prev) => prev.filter((bm) => !idSet.has(bm.bookId)));
+      setOpenBookIds((prev) => prev.filter((id) => !idSet.has(id)));
+      setReadingBookId((curr) => (curr && idSet.has(curr) ? null : curr));
+      setInspectedBookId((curr) => (curr && idSet.has(curr) ? null : curr));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        if (next.size === 0) setIsSelectionMode(false);
+        return next;
+      });
+      notify(
+        ids.length === 1
+          ? 'Deleted 1 book from local storage'
+          : `Deleted ${ids.length} books from local storage`,
+        'info'
+      );
+    },
+    [notify]
+  );
+
   // Confirmed Delete (used by both Bulk Delete and Right-Click Context Menu Delete)
   const handleConfirmDeleteBooks = useCallback(async () => {
     const ids = pendingDeleteBookIds ?? [];
     if (ids.length === 0) return;
-    await libraryDb.deleteBooks(ids);
-    const idSet = new Set(ids);
-    setBooks((prev) => prev.filter((b) => !idSet.has(b.id)));
-    setViewFolders((prev) =>
-      prev.map((vf) =>
-        vf.bookIds.some((id) => idSet.has(id))
-          ? {...vf, bookIds: vf.bookIds.filter((id) => !idSet.has(id))}
-          : vf
-      )
-    );
-    setAllHighlights((prev) => prev.filter((h) => !idSet.has(h.bookId)));
-    setAllBookmarks((prev) => prev.filter((bm) => !idSet.has(bm.bookId)));
-    setOpenBookIds((prev) => prev.filter((id) => !idSet.has(id)));
-    setReadingBookId((curr) => (curr && idSet.has(curr) ? null : curr));
-    setInspectedBookId((curr) => (curr && idSet.has(curr) ? null : curr));
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      for (const id of ids) next.delete(id);
-      if (next.size === 0) setIsSelectionMode(false);
-      return next;
-    });
+    await deleteBooksFromLibrary(ids);
     setPendingDeleteBookIds(null);
-    notify(
-      ids.length === 1
-        ? 'Deleted 1 book from local storage'
-        : `Deleted ${ids.length} books from local storage`,
-      'info'
-    );
-  }, [pendingDeleteBookIds, notify]);
+  }, [pendingDeleteBookIds, deleteBooksFromLibrary]);
 
   // Sort handler
   const handleSortFieldClick = (field: SortField) => {
@@ -2274,6 +2378,7 @@ export default function App() {
           onDropBooksToFavorites={(bookIds) => void handleDropBooksToFavorites(bookIds)}
           onExportBackup={() => void handleExportBackup()}
           onSelectImportBackupFile={(file) => void handleSelectImportBackupFile(file)}
+          onOpenStorageManager={() => setStorageManagerOpen(true)}
           isOpenMobile={mobileSidebarOpen}
           onCloseMobile={() => setMobileSidebarOpen(false)}
         />
@@ -3159,6 +3264,7 @@ export default function App() {
                                   <MobileBookList
                                     books={group.books}
                                     categories={categories}
+                                    cardDetails={libraryPrefs.cardDetails}
                                     selectedIds={selectedIds}
                                     isSelectionMode={isSelectionMode}
                                     onOpenBook={(book) => void openBookInTab(book.id)}
@@ -3362,10 +3468,26 @@ export default function App() {
         onSelectCategory={(categoryId) => setActiveFilter({kind: 'category', id: categoryId})}
         onOpenHighlightsHub={() => setActiveFilter({kind: 'smart', id: 'highlights'})}
         onImportBooks={() => fileInputRef.current?.click()}
+        onOpenStorageManager={() => setStorageManagerOpen(true)}
         onToggleTheme={toggleTheme}
         onToggleInspector={() =>
           updateLibraryPrefs({inspectorOpen: !libraryPrefs.inspectorOpen})
         }
+      />
+
+      {/* Storage & Book Files Manager Modal */}
+      <StorageManagerModal
+        isOpen={storageManagerOpen}
+        books={books}
+        onClose={() => setStorageManagerOpen(false)}
+        onReplaceFile={handleReplaceBookFile}
+        onDeleteBooks={deleteBooksFromLibrary}
+        onEditMetadata={(book) => {
+          setStorageManagerOpen(false);
+          setEditingBookId(book.id);
+        }}
+        onImportBooks={() => fileInputRef.current?.click()}
+        onNotify={(title, tone, detail) => notify(title, tone, detail)}
       />
 
       {/* Duplicate Import Resolution Modal */}
@@ -3385,6 +3507,7 @@ export default function App() {
           categories={categories}
           existingTags={existingTagNames}
           onSave={(updated) => void handleSaveMetadata(updated)}
+          onReplaceFile={handleReplaceBookFile}
           onDelete={(id) => void handleDeleteSingleBook(id)}
           onCreateFolder={handleCreateFolder}
           onCreateCategory={handleCreateCategory}

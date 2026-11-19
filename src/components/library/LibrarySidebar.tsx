@@ -8,6 +8,7 @@ import {
   Download,
   Folder,
   FolderPlus,
+  HardDrive,
   Highlighter,
   Library,
   Pencil,
@@ -74,6 +75,7 @@ interface LibrarySidebarProps {
   onDropBooksToFavorites: (bookIds: string[]) => void;
   onExportBackup: () => void;
   onSelectImportBackupFile: (file: File) => void;
+  onOpenStorageManager: () => void;
   isOpenMobile: boolean;
   onCloseMobile: () => void;
 }
@@ -130,6 +132,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
   onDropBooksToFavorites,
   onExportBackup,
   onSelectImportBackupFile,
+  onOpenStorageManager,
   isOpenMobile,
   onCloseMobile,
 }) => {
@@ -899,12 +902,23 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
 
       {/* Offline Storage Summary, Full ZIP Backup Actions & PWA Install */}
       <div className="p-3 border-t border-[var(--border-subtle)] space-y-2.5 shrink-0">
-        <div className="flex items-center justify-between gap-2 text-[11px] text-[var(--text-secondary)]">
-          <span className="truncate">Local archive</span>
-          <span className="font-mono-tabular text-[var(--text-primary)] shrink-0">
+        <button
+          type="button"
+          onClick={() => {
+            onCloseMobile();
+            onOpenStorageManager();
+          }}
+          title="Inspect local storage, spot duplicates, or replace oversized book files"
+          className="w-full inline-flex items-center justify-between gap-2 px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] hover:border-[var(--border-strong)] transition-colors cursor-pointer"
+        >
+          <span className="inline-flex items-center gap-1.5 min-w-0">
+            <HardDrive className="w-3 h-3 shrink-0 text-[var(--accent)]" />
+            <span className="truncate">Manage Files</span>
+          </span>
+          <span className="font-mono-tabular text-[var(--text-secondary)] shrink-0">
             {books.length} · {formatFileSize(totalBytes)}
           </span>
-        </div>
+        </button>
 
         {/* Export Backup & Import Backup Buttons */}
         <div className="grid grid-cols-2 gap-1.5">

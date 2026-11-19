@@ -59,7 +59,7 @@ export const HighlightsHubView: React.FC<HighlightsHubViewProps> = ({
       if (colorFilter !== 'all' && hl.color !== colorFilter) return false;
       if (notesOnly && !hl.note.trim()) return false;
       if (q) {
-        const hay = `${hl.selectedText} ${hl.note} ${book.title} ${book.author}`.toLowerCase();
+        const hay = `${hl.selectedText} ${hl.note} ${book.title} ${book.subtitle ?? ''} ${book.author}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
